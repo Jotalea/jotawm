@@ -23,7 +23,7 @@ By default, the binary is installed to `/usr/local/bin/wm`.
 
 ## Configuration
 
-Configuration is performed entirely at compile time by editing `wm.c`.
+Configuration is performed entirely at compile time by editing `wm.h`.
 
 To modify the modifier key, default terminal, or keybindings, edit the `Configuration` block at the top of the source file. Recompile and restart `wm` to apply changes.
 
