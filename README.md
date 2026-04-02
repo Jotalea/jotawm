@@ -1,8 +1,8 @@
-# wm
+# wm(1)
 
-A minimal, dynamic tiling window manager for X11. 
+A minimal tiling window manager for X11. 
 
-Designed with strict adherence to simplicity and OpenBSD coding standards. It provides a single master-stack layout, 9 mutual-exclusion workspaces, sloppy focus, and uses `pledge(2)` for process sandboxing when on OpenBSD. 
+Designed with strict adherence to simplicity and high quality code. It provides a single master-stack layout, 9 mutual-exclusion workspaces, sloppy mouse focus, and uses `pledge(2)` for process sandboxing when on OpenBSD. 
 
 There is no floating window support, no window decorations, and no runtime configuration parsing.
 
