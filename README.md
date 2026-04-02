@@ -36,12 +36,13 @@ The default terminal is `st`, and the default menu is `dmenu_run`. Ensure these 
 * **Mod + Return** : Spawn terminal
 * **Mod + Space** : Spawn application menu
 * **Mod + j / k** : Focus next / previous window
+* **Mod + j / k + Shift** : Move focused window left / right
 * **Mod + h / l** : Shrink / expand the master area
 * **Mod + f** : Toggle fullscreen for the focused window
 * **Mod + q** : Kill the focused window
+* **Mod + q + Shift** : Quit wm
 * **Mod + [1-9]** : Switch to workspace N
-* **Mod + Shift + [1-9]**: Move focused window to workspace N
-* **Mod + Shift + q** : Quit wm
+* **Mod + [1-9] + Shift**: Move focused window to workspace N
 
 ## Running
 

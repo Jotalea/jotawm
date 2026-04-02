@@ -6,7 +6,7 @@
 
 #define MODMASK  Mod4Mask
 #define NUM_WS   9
-#define MAX_WIN  32
+#define MAX_WIN  64
 
 static const char *termcmd[] = { "st",        NULL };
 static const char *menucmd[] = { "dmenu_run", NULL };
@@ -14,7 +14,7 @@ static const char *menucmd[] = { "dmenu_run", NULL };
 typedef union  { int i; float f; const char **v; } Arg;
 typedef struct { unsigned int mod; KeySym sym; void (*fn)(const Arg *); Arg arg; } Key;
 
-/* forward declarations required by the keys[] static initializer */
+// Avaliable keys[] functions
 static void focusdir(const Arg *);
 static void killclient(const Arg *);
 static void moveclient(const Arg *);
@@ -148,7 +148,7 @@ maprequest(XEvent *e)
 {
     XWindowAttributes wa;
     if (!XGetWindowAttributes(dpy, e->xmaprequest.window, &wa) || wa.override_redirect) return;
-    if (nclients >= MAX_WIN) { warnx("MAX_WIN (%d) reached, ignoring new window", MAX_WIN); return; }
+    if (nclients >= MAX_WIN) { return; }
     pool[nclients] = (Client){ e->xmaprequest.window, curws, 0 };
     XSelectInput(dpy, pool[nclients].win, EnterWindowMask | StructureNotifyMask);
     XMapWindow(dpy, pool[nclients].win);
