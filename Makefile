@@ -7,19 +7,22 @@ LDFLAGS = -L$(X11LIB) -lX11
 
 CC      = cc
 
-all: wm
+all: jwm
 
-wm: wm.c
-	$(CC) $(CFLAGS) -o $@ wm.c $(LDFLAGS)
+jwm: jwm.c jwm.h
+	$(CC) $(CFLAGS) -o $@ jwm.c $(LDFLAGS)
 
 clean:
-	rm -f wm
+	rm -f jwm
 
 install: all
 	mkdir -p $(DESTDIR)$(PREFIX)/bin
-	install -m 755 wm $(DESTDIR)$(PREFIX)/bin/wm
+	install -m 755 jwm $(DESTDIR)$(PREFIX)/bin/jwm
+	mkdir -p $(DESTDIR)$(PREFIX)/share/xsessions
+	install -m 644 jwm.desktop $(DESTDIR)$(PREFIX)/share/xsessions/jwm.desktop
 
 uninstall:
-	rm -f $(DESTDIR)$(PREFIX)/bin/wm
+	rm -f $(DESTDIR)$(PREFIX)/bin/jwm
+	rm -f $(DESTDIR)$(PREFIX)/share/xsessions/jwm.desktop
 
 .PHONY: all clean install uninstall

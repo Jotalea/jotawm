@@ -5,7 +5,7 @@
 #include <X11/keysym.h>
 #include <X11/Xlib.h>
 
-#include "wm.h"
+#include "jwm.h"
 
 #define SPLITRATIO 0.5f
 #define NELEM(a)   (sizeof(a) / sizeof(*(a)))
