@@ -1,6 +1,6 @@
 PREFIX  = /usr/local
-X11INC  = /usr/X11R6/include
-X11LIB  = /usr/X11R6/lib
+X11INC  = /usr/include
+X11LIB  = /usr/lib
 
 CFLAGS  = -O2 -Wall -Wextra -I$(X11INC)
 LDFLAGS = -L$(X11LIB) -lX11
