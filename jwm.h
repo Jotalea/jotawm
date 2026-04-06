@@ -1,6 +1,6 @@
 #define NSPACE     9
-#define NCLIENT    7  
-#define BARH       16 
+#define NCLIENT    7
+#define BARH       0
 
 enum { EXEC, VIEW, CYCLE, SWAP, SEND, RESIZE, FULLSCR, CLOSE, QUIT };
 
@@ -12,14 +12,16 @@ typedef struct { unsigned int mod; KeySym sym; int act; Arg arg; } Key;
 #define SHTKEY  ShiftMask
 static const char *termcmd[] = { "kitty", NULL };
 static const char *menucmd[] = { "dmenu_run", NULL };
+static const char *scrscmd[] = { "maim | xclip -selection clipboard -t image/png", NULL };
 
 #define WS(n)                                      \
         { MODKEY, XK_##n, VIEW, {.i=n-1} },        \
         { MODKEY|SHTKEY, XK_##n, SEND, {.i=n-1} }
 
 static Key keys[] = {
-        { MODKEY,           XK_Return, EXEC,    {.v = termcmd}  },
+        { MODKEY,           XK_t,      EXEC,    {.v = termcmd}  },
         { MODKEY,           XK_space,  EXEC,    {.v = menucmd}  },
+        { MODKEY|SHTKEY,    XK_s,      EXEC,    {.v = scrscmd}  },
         { MODKEY,           XK_Left,   CYCLE,   {.i = +1}       },
         { MODKEY,           XK_Right,  CYCLE,   {.i = -1}       },
         { MODKEY|SHTKEY,    XK_Left,   SWAP,    {.i = +1}       },

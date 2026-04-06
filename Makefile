@@ -3,7 +3,7 @@ X11INC  = /usr/include
 X11LIB  = /usr/lib
 
 CFLAGS  = -O2 -Wall -Wextra -I$(X11INC)
-LDFLAGS = -L$(X11LIB) -lX11
+LDFLAGS = -L$(X11LIB) -lX11 -lXtst
 
 CC      = cc
 
