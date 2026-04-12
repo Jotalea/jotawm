@@ -42,15 +42,23 @@ The default terminal is `kitty`, and the default menu is `dmenu_run`. Ensure the
 
 ## Running
 
+### xinitrc
 Add the following line to your `~/.xinitrc` to start `jwm` using `startx`:
 
 ```sh
 exec jwm
 ```
 
-## Display Manager
+### Display Manager
 
 `jwm` installs a desktop file to `/usr/local/share/xsessions/jwm.desktop`, so it should appear as an option in most display managers (GDM, LightDM, SDDM, etc.).
+
+## Recommended software
+this is software that i personally recommend to use with jwm
+- [pulseaudio](http://anongit.freedesktop.org/git/pulseaudio/pulseaudio.git)
+- [brightnessctl](https://github.com/Hummer12007/brightnessctl.git)
+- [xnap](https://github.com/uint23/xnap.git)
+- [slstatus](https://git.suckless.org/slstatus)
 
 ## License
 

@@ -4,6 +4,7 @@
 #include <unistd.h>
 #include <X11/keysym.h>
 #include <X11/Xlib.h>
+#include <X11/XF86keysym.h>
 
 #include "jwm.h"
 
