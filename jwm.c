@@ -2,6 +2,7 @@
 #include <signal.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <X11/Xatom.h>
 #include <X11/keysym.h>
 #include <X11/Xlib.h>
 #include <X11/XF86keysym.h>
@@ -264,7 +265,15 @@ static int rmwin(Window w) {
     return 0;
 }
 
-/* ── Entry point ─────────────────────────────────────────────────────────── */
+/* ── Extended Window Manager Hints ──────────────────────────────────────── */
+
+static void update_ewmh_desktop(void) {
+    Atom net_curr = XInternAtom(dpy, "_NET_CURRENT_DESKTOP", False);
+    unsigned long data = curspace;
+    XChangeProperty(dpy, root, net_curr, XA_CARDINAL, 32, PropModeReplace, (unsigned char *)&data, 1);
+}
+
+/* ── Entry point ────────────────────────────────────────────────────────── */
 
 int main(void) {
     XEvent ev;
@@ -279,6 +288,11 @@ int main(void) {
     root = DefaultRootWindow(dpy);
     XSetWindowBackground(dpy, root, BlackPixel(dpy, DefaultScreen(dpy)));
     XClearWindow(dpy, root);
+
+    Atom net_desks = XInternAtom(dpy, "_NET_NUMBER_OF_DESKTOPS", False);
+    unsigned long ndesks = NSPACE;
+    XChangeProperty(dpy, root, net_desks, XA_CARDINAL, 32, PropModeReplace, (unsigned char *)&ndesks, 1);
+    update_ewmh_desktop();
 
     scrw = DisplayWidth(dpy, 0);
     scrh = DisplayHeight(dpy, 0) - BARH;
@@ -472,6 +486,7 @@ int main(void) {
                     if (a.i >= 0 && a.i < NSPACE && a.i != curspace) {
                         prevspace = curspace;
                         curspace = a.i;
+                        update_ewmh_desktop();
                         tile();
                         if (focus[curspace]) setfocus(focus[curspace]);
                     }
