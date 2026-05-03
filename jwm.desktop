@@ -1,5 +1,16 @@
 [Desktop Entry]
-Name=jwm
+Comment[en_US]=minimalist tiling window manager
 Comment=minimalist tiling window manager
 Exec=jwm
+GenericName[en_US]=window manager
+GenericName=window manager
+MimeType=
+Name[en_US]=jwm
+Name=jwm
+Path=
+StartupNotify=true
+Terminal=false
+TerminalOptions=
 Type=Application
+X-KDE-SubstituteUID=false
+X-KDE-Username=

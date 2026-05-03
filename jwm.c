@@ -8,86 +8,268 @@
 
 #include "jwm.h"
 
-#define SPLITRATIO 0.5f
-#define NELEM(a)   (sizeof(a) / sizeof(*(a)))
+#define NELEM(a) (sizeof(a) / sizeof(*(a)))
+#define MINSIZE  50
 
-typedef struct { Window win; int isfull; } Client;
+/* ── BSP node ───────────────────────────────────────────────────────────── */
 
-/* Forward Declarations */
-static int xerror(Display *d, XErrorEvent *e);
+typedef struct Node Node;
+struct Node {
+    int    leaf;        /* 1 = window leaf, 0 = split node          */
+    int    isfull;      /* fullscreen (leaf only)                    */
+    int    isfloat;     /* floating   (leaf only)                    */
+    int    horiz;       /* split direction: 1=horizontal, 0=vertical */
+    float  ratio;       /* split ratio [0.1, 0.9]                    */
+    Node  *a, *b;       /* children (split only)                     */
+    Node  *par;         /* parent node, NULL for root                */
+    Window win;         /* X window (leaf only)                      */
+    /* cached geometry (set during tilenode, used by drag) */
+    int x, y, w, h;
+};
+
+/* ── Forward declarations ───────────────────────────────────────────────── */
+
+static void tilenode(Node *n, int x, int y, int w, int h);
 static void tile(void);
-static int rmclient(Window w);
+static void setfocus(Node *n);
+static void detach(int s, Node *n);
+static void attach(int s, Node *leaf);
+static Node *findleaf(Node *n, Window w);
+static Node *firstleaf(Node *n);
+static Node *nextleaf(Node *cur, int s);
+static Node *prevleaf(Node *cur, int s);
 
-/* Global State */
+/* ── Global state ───────────────────────────────────────────────────────── */
+
 static Display *dpy;
 static Window   root;
-static int      scrw, scrh, curspace, running = 1;
-static float    splitratio = SPLITRATIO;
-static Client   clients[NSPACE][NCLIENT];
-static int      nclients[NSPACE], selclient[NSPACE];
+static int scrw, scrh, curspace, running = 1;
+static int prevspace = 0;
+
+/* One BSP tree + focused leaf per workspace */
+static Node *trees[NSPACE];
+static Node *focus[NSPACE];
+
+/* Drag state (mod + LMB = move, mod + RMB = resize) */
+static Node *drag_node;
+static int   drag_mode;                     /* 1=move, 2=resize */
+static int   drag_ox, drag_oy;             /* pointer origin    */
+static int   drag_wx, drag_wy;             /* window origin     */
+static int   drag_ww, drag_wh;             /* window size       */
+
+/* ── Error handler ──────────────────────────────────────────────────────── */
 
 static int xerror(Display *d, XErrorEvent *e) {
-    /* Safely ignore all asynchronous X11 protocol errors */
-    return 0; (void) d, (void)e;
+    (void)d; (void)e;
+    return 0;
+}
+
+/* ── BSP helpers ────────────────────────────────────────────────────────── */
+
+static Node *mkleaf(Window w) {
+    Node *n  = calloc(1, sizeof *n);
+    n->leaf  = 1;
+    n->ratio = 0.5f;
+    n->win   = w;
+    return n;
+}
+
+static Node *findleaf(Node *n, Window w) {
+    if (!n) return NULL;
+    if (n->leaf) return n->win == w ? n : NULL;
+    Node *r = findleaf(n->a, w);
+    return r ? r : findleaf(n->b, w);
+}
+
+static Node *firstleaf(Node *n) {
+    while (n && !n->leaf) n = n->a;
+    return n;
+}
+
+static Node *lastleaf(Node *n) {
+    while (n && !n->leaf) n = n->b;
+    return n;
+}
+
+/* In-order next leaf (wraps around) */
+static Node *nextleaf(Node *cur, int s) {
+    if (!cur || !trees[s]) return firstleaf(trees[s]);
+    Node *n = cur;
+    while (n->par) {
+        if (n->par->a == n) {
+            Node *r = firstleaf(n->par->b);
+            if (r) return r;
+        }
+        n = n->par;
+    }
+    return firstleaf(trees[s]);   /* wrap */
+}
+
+/* In-order prev leaf (wraps around) */
+static Node *prevleaf(Node *cur, int s) {
+    if (!cur || !trees[s]) return lastleaf(trees[s]);
+    Node *n = cur;
+    while (n->par) {
+        if (n->par->b == n) {
+            Node *r = lastleaf(n->par->a);
+            if (r) return r;
+        }
+        n = n->par;
+    }
+    return lastleaf(trees[s]);    /* wrap */
+}
+
+/* Raise all floating leaves above tiled ones */
+static void raise_floats(Node *n) {
+    if (!n) return;
+    if (n->leaf) { if (n->isfloat) XRaiseWindow(dpy, n->win); return; }
+    raise_floats(n->a);
+    raise_floats(n->b);
+}
+
+/* ── Attach / detach ────────────────────────────────────────────────────── */
+
+static void attach(int s, Node *leaf) {
+    leaf->par = NULL;
+    if (!trees[s]) {
+        trees[s] = leaf;
+        focus[s] = leaf;
+        return;
+    }
+
+    /* Split around the currently focused leaf, or the first leaf */
+    Node *t = (focus[s] && focus[s]->leaf) ? focus[s] : firstleaf(trees[s]);
+
+    /* Choose split direction based on the target cell's aspect ratio */
+    int horiz = (t->w > 0) ? (t->w >= t->h) : (scrw >= scrh);
+
+    Node *sp    = calloc(1, sizeof *sp);
+    sp->ratio   = 0.5f;
+    sp->horiz   = horiz;
+    sp->par     = t->par;
+    sp->a       = t;
+    sp->b       = leaf;
+
+    if (!t->par)             trees[s] = sp;
+    else if (t->par->a == t) t->par->a = sp;
+    else                     t->par->b = sp;
+
+    t->par    = sp;
+    leaf->par = sp;
+    focus[s]  = leaf;
+}
+
+static void detach(int s, Node *n) {
+    if (!n->par) {
+        trees[s] = NULL;
+        focus[s] = NULL;
+        return;
+    }
+    Node *p   = n->par;
+    Node *sib = (p->a == n) ? p->b : p->a;
+    sib->par  = p->par;
+
+    if (!p->par)             trees[s] = sib;
+    else if (p->par->a == p) p->par->a = sib;
+    else                     p->par->b = sib;
+
+    if (focus[s] == n) focus[s] = firstleaf(sib);
+    free(p);
+    n->par = NULL;
+}
+
+/* ── Tiling ─────────────────────────────────────────────────────────────── */
+
+static void tilenode(Node *n, int x, int y, int w, int h) {
+    if (!n) return;
+    n->x = x; n->y = y; n->w = w; n->h = h;
+
+    if (n->leaf) {
+        if (n->isfloat) return;   /* floats keep their own geometry */
+
+        if (n->isfull) {
+            XMoveResizeWindow(dpy, n->win, 0, BARH, scrw, scrh);
+            return;
+        }
+
+        int gx = x + GAP;
+        int gy = y + GAP;
+        int gw = w - 2 * GAP;
+        int gh = h - 2 * GAP;
+        if (gw < 1) gw = 1;
+        if (gh < 1) gh = 1;
+        XMoveResizeWindow(dpy, n->win, gx, gy, gw, gh);
+        return;
+    }
+
+    if (n->horiz) {
+        int wa = (int)(w * n->ratio);
+        tilenode(n->a, x,      y, wa,    h);
+        tilenode(n->b, x + wa, y, w - wa, h);
+    } else {
+        int ha = (int)(h * n->ratio);
+        tilenode(n->a, x, y,      w, ha);
+        tilenode(n->b, x, y + ha, w, h - ha);
+    }
 }
 
 static void tile(void) {
     for (int s = 0; s < NSPACE; s++) {
-        int nc = nclients[s];
-         
-        if (nc > 0) { selclient[s] %= nc; }
+        if (!trees[s]) continue;
+        if (s != curspace) {
+            int hide_x = (s < curspace) ? -scrw : scrw;
 
-        for (int i = 0; i < nc; i++) {
-            Client *c = &clients[s][i];
-
-            if (s != curspace) {
-                XMoveWindow(dpy, c->win, scrw * 2, 0);
-                continue;
+            Node *stk[512]; int top = 0;
+            stk[top++] = trees[s];
+            while (top) {
+                Node *c = stk[--top];
+                if (c->leaf) XMoveWindow(dpy, c->win, hide_x, 0);
+                else { stk[top++] = c->a; stk[top++] = c->b; }
             }
-
-            if (c->isfull) {
-                XMoveResizeWindow(dpy, c->win, 0, BARH, scrw, scrh);
-                continue;
-            }
-
-            int mastw  = (nc > 1) ? (int)(scrw * splitratio) : scrw;
-            int stackc = (nc > 1) ? (nc - 1) : 1;
-             
-            int cx = i ? mastw : 0;
-            int cy = (i ? (i - 1) * (scrh / stackc) : 0) + BARH;
-            int cw = i ? (scrw - mastw) : mastw;
-            int ch = i ? (scrh / stackc) : scrh;
-
-            XMoveResizeWindow(dpy, c->win, cx, cy, cw, ch);
+        } else {
+            tilenode(trees[s], 0, BARH, scrw, scrh);
+            raise_floats(trees[s]);
         }
     }
 
-    Client *f = nclients[curspace] ? &clients[curspace][selclient[curspace]] : NULL;
+    Node *f = focus[curspace];
     XSetInputFocus(dpy, f ? f->win : root, RevertToPointerRoot, CurrentTime);
-     
-    if (f) { XRaiseWindow(dpy, f->win); }
-     
+    if (f) XRaiseWindow(dpy, f->win);
+
     XSync(dpy, False);
 }
 
-static int rmclient(Window w) {
+/* ── Focus ──────────────────────────────────────────────────────────────── */
+
+static void setfocus(Node *n) {
+    if (!n || !n->leaf) return;
+    focus[curspace] = n;
+    XSetInputFocus(dpy, n->win, RevertToPointerRoot, CurrentTime);
+    XRaiseWindow(dpy, n->win);
+    raise_floats(trees[curspace]);
+    XSync(dpy, False);
+}
+
+/* ── Remove window from whichever workspace owns it ─────────────────────── */
+
+static int rmwin(Window w) {
     for (int s = 0; s < NSPACE; s++) {
-        for (int i = 0; i < nclients[s]; i++) {
-            if (clients[s][i].win == w) {
-                nclients[s]--;
-                clients[s][i] = clients[s][nclients[s]];
-                return 1;
-            }
-        }
+        Node *n = findleaf(trees[s], w);
+        if (!n) continue;
+        if (drag_node == n) { drag_node = NULL; drag_mode = 0; }
+        detach(s, n);
+        free(n);
+        return 1;
     }
     return 0;
 }
+
+/* ── Entry point ─────────────────────────────────────────────────────────── */
 
 int main(void) {
     XEvent ev;
 
     if (!(dpy = XOpenDisplay(NULL))) { errx(1, "cannot open display"); }
-
     XSetErrorHandler(xerror);
 
 #ifdef __OpenBSD__
@@ -95,150 +277,311 @@ int main(void) {
 #endif
 
     root = DefaultRootWindow(dpy);
-    
     XSetWindowBackground(dpy, root, BlackPixel(dpy, DefaultScreen(dpy)));
     XClearWindow(dpy, root);
-    
+
     scrw = DisplayWidth(dpy, 0);
     scrh = DisplayHeight(dpy, 0) - BARH;
 
-    XSelectInput(dpy, root, SubstructureRedirectMask | SubstructureNotifyMask | KeyPressMask);
+    XSelectInput(dpy, root,
+        SubstructureRedirectMask | SubstructureNotifyMask |
+        KeyPressMask | ButtonPressMask | ButtonReleaseMask | PointerMotionMask);
 
     for (size_t i = 0; i < NELEM(keys); i++) {
         XGrabKey(dpy, XKeysymToKeycode(dpy, keys[i].sym), keys[i].mod,
             root, True, GrabModeAsync, GrabModeAsync);
     }
-     
+
+    /* Grab mod+LMB and mod+RMB on root for float drag/resize */
+    XGrabButton(dpy, Button1, MODKEY, root, False,
+        ButtonPressMask | ButtonReleaseMask | PointerMotionMask,
+        GrabModeAsync, GrabModeAsync, None, None);
+    XGrabButton(dpy, Button3, MODKEY, root, False,
+        ButtonPressMask | ButtonReleaseMask | PointerMotionMask,
+        GrabModeAsync, GrabModeAsync, None, None);
+
     signal(SIGCHLD, SIG_IGN);
 
     while (running && !XNextEvent(dpy, &ev)) {
         switch (ev.type) {
+
+        /* ── New window ──────────────────────────────────────────────── */
         case MapRequest: {
             XWindowAttributes wa;
             Window w = ev.xmaprequest.window;
-             
-            if (nclients[curspace] >= NCLIENT) {  
-                XDestroyWindow(dpy, w);
-                break;  
-            }
-            if (!XGetWindowAttributes(dpy, w, &wa) || wa.override_redirect) { break; }
-             
-            clients[curspace][nclients[curspace]] = (Client){ w, 0 };
+            if (!XGetWindowAttributes(dpy, w, &wa) || wa.override_redirect) break;
+
+            Node *leaf = mkleaf(w);
             XSelectInput(dpy, w, EnterWindowMask | StructureNotifyMask);
-            
-            XGrabButton(dpy, Button1, AnyModifier, w, False, ButtonPressMask, GrabModeSync, GrabModeAsync, None, None);
-             
-            selclient[curspace] = nclients[curspace];
-            nclients[curspace]++;
-            
+            /* Grab mod+buttons on the window itself for float interaction */
+            XGrabButton(dpy, Button1, MODKEY, w, False,
+                ButtonPressMask | ButtonReleaseMask | PointerMotionMask,
+                GrabModeAsync, GrabModeAsync, None, None);
+            XGrabButton(dpy, Button3, MODKEY, w, False,
+                ButtonPressMask | ButtonReleaseMask | PointerMotionMask,
+                GrabModeAsync, GrabModeAsync, None, None);
+            /* Also grab plain Button1 for click-to-focus */
+            XGrabButton(dpy, Button1, AnyModifier, w, False,
+                ButtonPressMask, GrabModeSync, GrabModeAsync, None, None);
+
+            attach(curspace, leaf);
             tile();
             XMapWindow(dpy, w);
+            setfocus(leaf);
             break;
         }
+
+        /* ── Window closed ───────────────────────────────────────────── */
         case DestroyNotify:
-            if (rmclient(ev.xdestroywindow.window)) { tile(); }
+            if (rmwin(ev.xdestroywindow.window)) tile();
             break;
         case UnmapNotify:
-            if (rmclient(ev.xunmap.window)) { tile(); }
+            if (ev.xunmap.send_event && rmwin(ev.xunmap.window)) tile();
             break;
+
+        /* ── Apps requesting geometry ────────────────────────────────── */
+        case ConfigureRequest: {
+            XWindowChanges wc = {
+                .x = ev.xconfigurerequest.x,   .y = ev.xconfigurerequest.y,
+                .width  = ev.xconfigurerequest.width,
+                .height = ev.xconfigurerequest.height,
+                .border_width = 0,
+                .sibling   = ev.xconfigurerequest.above,
+                .stack_mode = ev.xconfigurerequest.detail,
+            };
+            XConfigureWindow(dpy, ev.xconfigurerequest.window,
+                ev.xconfigurerequest.value_mask, &wc);
+            break;
+        }
+
+        /* ── Focus follows mouse ─────────────────────────────────────── */
         case EnterNotify:
-            if (ev.xcrossing.mode != NotifyNormal || ev.xcrossing.detail == NotifyInferior) { break; }
-             
-            for (int i = 0; i < nclients[curspace]; i++) {
-                if (clients[curspace][i].win == ev.xcrossing.window) {
-                    selclient[curspace] = i;
-                    tile();
-                    break;
+            if (ev.xcrossing.mode != NotifyNormal ||
+                ev.xcrossing.detail == NotifyInferior) break;
+            {
+                Node *n = findleaf(trees[curspace], ev.xcrossing.window);
+                if (n && n != focus[curspace]) {
+                    focus[curspace] = n;
+                    setfocus(n);
                 }
             }
             break;
-        case ButtonPress:
-            for (int i = 0; i < nclients[curspace]; i++) {
-                if (clients[curspace][i].win == ev.xbutton.window) {
-                    if (selclient[curspace] != i) {
-                        selclient[curspace] = i;
-                        tile();
-                    }
-                    break;
+
+        /* ── Button press: click-to-focus or start float drag ────────── */
+        case ButtonPress: {
+            Window clicked = ev.xbutton.subwindow
+                ? ev.xbutton.subwindow : ev.xbutton.window;
+
+            /* Check if modifier is held (float drag) */
+            if (ev.xbutton.state & MODKEY) {
+                Node *n = findleaf(trees[curspace], clicked);
+                if (n && n->isfloat) {
+                    focus[curspace] = n;
+                    setfocus(n);
+
+                    Window dw; int rx, ry; unsigned gw, gh, gb, gd;
+                    XGetGeometry(dpy, n->win, &dw,
+                        &drag_wx, &drag_wy, &gw, &gh, &gb, &gd);
+                    drag_ww  = (int)gw;
+                    drag_wh  = (int)gh;
+                    drag_ox  = ev.xbutton.x_root;
+                    drag_oy  = ev.xbutton.y_root;
+                    drag_node = n;
+                    drag_mode = (ev.xbutton.button == Button1) ? 1 : 2;
+
+                    XGrabPointer(dpy, root, False,
+                        PointerMotionMask | ButtonReleaseMask,
+                        GrabModeAsync, GrabModeAsync, None, None, CurrentTime);
+                } else {
+                    XAllowEvents(dpy, ReplayPointer, CurrentTime);
                 }
+            } else {
+                /* Plain click-to-focus */
+                Node *n = findleaf(trees[curspace], clicked);
+                if (n && n != focus[curspace]) {
+                    focus[curspace] = n;
+                    setfocus(n);
+                }
+                XAllowEvents(dpy, ReplayPointer, CurrentTime);
             }
-            XAllowEvents(dpy, ReplayPointer, CurrentTime);
             break;
+        }
+
+        /* ── End drag ────────────────────────────────────────────────── */
+        case ButtonRelease:
+            if (drag_mode) {
+                XUngrabPointer(dpy, CurrentTime);
+                drag_mode = 0;
+                drag_node = NULL;
+            }
+            break;
+
+        /* ── Float move / resize ─────────────────────────────────────── */
+        case MotionNotify: {
+            if (!drag_mode || !drag_node) break;
+            /* Coalesce motion events */
+            XEvent tmp;
+            while (XCheckTypedEvent(dpy, MotionNotify, &tmp)) ev = tmp;
+
+            int dx = ev.xmotion.x_root - drag_ox;
+            int dy = ev.xmotion.y_root - drag_oy;
+
+            if (drag_mode == 1) {
+                /* Move */
+                int nx = drag_wx + dx;
+                int ny = drag_wy + dy;
+                if (nx < 0) nx = 0;
+                if (ny < 0) ny = 0;
+                if (nx + drag_ww > scrw) nx = scrw - drag_ww;
+                if (ny + drag_wh > scrh) ny = scrh - drag_wh;
+                XMoveWindow(dpy, drag_node->win, nx, ny);
+            } else {
+                /* Resize */
+                int nw = drag_ww + dx;
+                int nh = drag_wh + dy;
+                if (nw < MINSIZE) nw = MINSIZE;
+                if (nh < MINSIZE) nh = MINSIZE;
+                if (drag_wx + nw > scrw) nw = scrw - drag_wx;
+                if (drag_wy + nh > scrh) nh = scrh - drag_wy;
+                XResizeWindow(dpy, drag_node->win, nw, nh);
+            }
+            break;
+        }
+
+        /* ── Key bindings ────────────────────────────────────────────── */
         case KeyPress: {
             KeySym sym = XLookupKeysym(&ev.xkey, 0);
             for (size_t i = 0; i < NELEM(keys); i++) {
-                if (sym == keys[i].sym && keys[i].mod == ev.xkey.state) {
-                    Arg a  = keys[i].arg;
-                    int sel = selclient[curspace];
-                    int nc  = nclients[curspace];
-                     
-                    switch (keys[i].act) {
-                    case EXEC:
-                        if (!fork()) {
-                            if (dpy) close(ConnectionNumber(dpy));
-                            setsid();
-                            execvp(((char**)a.v)[0], (char**)a.v);
-                            _exit(1);
-                        }
-                        break;
-                    case VIEW:
-                        if (a.i >= 0 && a.i < NSPACE) {
-                            curspace = a.i;
-                            tile();
-                        }
-                        break;
-                    case CYCLE:
-                        if (nc > 0) {
-                            selclient[curspace] = ((sel + a.i) % nc + nc) % nc;
-                            tile();
-                        }
-                        break;
-                    case QUIT:
-                        running = 0;
-                        break;
-                    case CLOSE:
-                        if (nc) {
-                            XKillClient(dpy, clients[curspace][sel].win);
-                        }
-                        break;
-                    case FULLSCR:
-                        if (nc) {
-                            clients[curspace][sel].isfull ^= 1;
-                            tile();
-                        }
-                        break;
-                    case RESIZE:
-                        splitratio += a.f;
-                        if (splitratio < 0.1f) splitratio = 0.1f;
-                        if (splitratio > 0.9f) splitratio = 0.9f;
-                        tile();
-                        break;
-                    case SWAP:
-                        if (nc > 1) {
-                            int t = ((sel + a.i) % nc + nc) % nc;
-                            Client tmp = clients[curspace][sel];
-                            clients[curspace][sel] = clients[curspace][t];
-                            clients[curspace][t] = tmp;
-                            selclient[curspace] = t;
-                            tile();
-                        }
-                        break;
-                    case SEND:
-                        if (nc && a.i >= 0 && a.i < NSPACE && a.i != curspace && nclients[a.i] < NCLIENT) {
-                            Window w = clients[curspace][sel].win;
-                            rmclient(w);
-                            clients[a.i][nclients[a.i]++] = (Client){ w, 0 };
-                            tile();
-                        }
-                        break;
+                if (sym != keys[i].sym || keys[i].mod != ev.xkey.state) continue;
+
+                Arg   a   = keys[i].arg;
+                Node *foc = focus[curspace];
+
+                switch (keys[i].act) {
+
+                case EXEC:
+                    if (!fork()) {
+                        if (dpy) close(ConnectionNumber(dpy));
+                        setsid();
+                        execvp(((char **)a.v)[0], (char **)a.v);
+                        _exit(1);
                     }
+                    break;
+
+                case VIEW:
+                    if (a.i >= 0 && a.i < NSPACE && a.i != curspace) {
+                        prevspace = curspace;
+                        curspace = a.i;
+                        tile();
+                        if (focus[curspace]) setfocus(focus[curspace]);
+                    }
+                    break;
+                case CYCLE:
+                    if (trees[curspace]) {
+                        Node *n = (a.i > 0)
+                            ? nextleaf(foc, curspace)
+                            : prevleaf(foc, curspace);
+                        if (n && n != foc) {
+                            focus[curspace] = n;
+                            setfocus(n);
+                        }
+                    }
+                    break;
+
+                case QUIT:
+                    running = 0;
+                    break;
+
+                case CLOSE:
+                    if (foc) XKillClient(dpy, foc->win);
+                    break;
+
+                case FULLSCR:
+                    if (foc) {
+                        foc->isfull ^= 1;
+                        tile();
+                    }
+                    break;
+
+                case FLOAT:
+                    if (foc) {
+                        foc->isfloat ^= 1;
+                        if (foc->isfloat) {
+                            /* Centre the window at half screen size */
+                            int fw = scrw / 2, fh = scrh / 2;
+                            int fx = (scrw - fw) / 2;
+                            int fy = BARH + (scrh - fh) / 2;
+                            XMoveResizeWindow(dpy, foc->win, fx, fy, fw, fh);
+                            /* Grab mod+buttons so dragging works */
+                            XGrabButton(dpy, Button1, MODKEY, foc->win, False,
+                                ButtonPressMask | ButtonReleaseMask | PointerMotionMask,
+                                GrabModeAsync, GrabModeAsync, None, None);
+                            XGrabButton(dpy, Button3, MODKEY, foc->win, False,
+                                ButtonPressMask | ButtonReleaseMask | PointerMotionMask,
+                                GrabModeAsync, GrabModeAsync, None, None);
+                            XRaiseWindow(dpy, foc->win);
+                        } else {
+                            tile();
+                        }
+                    }
+                    break;
+
+                case RESIZE:
+                    /* Adjust the parent split ratio of the focused leaf */
+                    if (foc && foc->par) {
+                        foc->par->ratio += a.f;
+                        if (foc->par->ratio < 0.1f) foc->par->ratio = 0.1f;
+                        if (foc->par->ratio > 0.9f) foc->par->ratio = 0.9f;
+                        tile();
+                    }
+                    break;
+
+                case SWAP:
+                    /* Swap the windows of two adjacent leaves */
+                    if (trees[curspace] && foc) {
+                        Node *other = (a.i > 0)
+                            ? nextleaf(foc, curspace)
+                            : prevleaf(foc, curspace);
+                        if (other && other != foc) {
+                            Window tmp  = foc->win;
+                            foc->win    = other->win;
+                            other->win  = tmp;
+                            focus[curspace] = other;
+                            tile();
+                            setfocus(other);
+                        }
+                    }
+                    break;
+
+                case SEND:
+                    if (foc && a.i >= 0 && a.i < NSPACE && a.i != curspace) {
+                        Window w = foc->win;
+                        detach(curspace, foc);
+                        foc->isfloat = 0;
+                        foc->isfull  = 0;
+                        attach(a.i, foc);
+                        tile();
+                        /* focus something in the current workspace */
+                        if (focus[curspace]) setfocus(focus[curspace]);
+                        (void)w;
+                    }
+                    break;
+
+                case SPLITDIR:
+                    /* Toggle the split direction of the focused node's parent */
+                    if (foc && foc->par) {
+                        foc->par->horiz ^= 1;
+                        tile();
+                    }
+                    break;
                 }
             }
             break;
         }
-        }
+
+        } /* switch ev.type */
     }
-     
+
     XCloseDisplay(dpy);
     return 0;
 }

@@ -1,4 +1,4 @@
-PREFIX  = /usr/local
+PREFIX  = /usr
 X11INC  = /usr/include
 X11LIB  = /usr/lib
 
