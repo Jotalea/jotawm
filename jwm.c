@@ -347,6 +347,23 @@ static void update_ewmh_desktop(void) {
     XChangeProperty(dpy, root, net_curr, XA_CARDINAL, 32, PropModeReplace, (unsigned char *)&data, 1);
 }
 
+/* ── Grab keys ──────────────────────────────────────────────────────────── */
+
+static void grab_keys(void) {
+    XUngrabKey(dpy, AnyKey, AnyModifier, root);
+
+    unsigned int modifiers[] = { 0, LockMask, Mod2Mask, LockMask|Mod2Mask };
+    for (size_t i = 0; i < NELEM(keys); i++) {
+        KeyCode code = XKeysymToKeycode(dpy, keys[i].sym);
+        if (code == 0) continue; /* Skip keys not present in the current map */
+
+        for (size_t j = 0; j < NELEM(modifiers); j++) {
+            XGrabKey(dpy, code, keys[i].mod | modifiers[j],
+                 root, True, GrabModeAsync, GrabModeAsync);
+        }
+    }
+}
+
 /* ── Entry point ────────────────────────────────────────────────────────── */
 
 int main(void) {
@@ -555,6 +572,15 @@ int main(void) {
             }
             break;
         }
+
+        /* ── Handle lost keys ────────────────────────────────────────── */
+        case MappingNotify:
+            XRefreshKeyboardMapping(&ev.xmapping);
+
+            if (ev.xmapping.request == MappingKeyboard || ev.xmapping.request == MappingModifier) {
+                grab_keys();
+            }
+            break;
 
         /* ── Key bindings ────────────────────────────────────────────── */
         case KeyPress: {
