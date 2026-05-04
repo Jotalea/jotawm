@@ -565,12 +565,11 @@ int main(void) {
                     if (foc) {
                         foc->isfloat ^= 1;
                         if (foc->isfloat) {
-                            /* Centre the window at half screen size */
+                            detach(curspace, foc); 
                             int fw = scrw / 2, fh = scrh / 2;
                             int fx = (scrw - fw) / 2;
                             int fy = BARH + (scrh - fh) / 2;
                             XMoveResizeWindow(dpy, foc->win, fx, fy, fw, fh);
-                            /* Grab mod+buttons so dragging works */
                             XGrabButton(dpy, Button1, MODKEY, foc->win, False,
                                 ButtonPressMask | ButtonReleaseMask | PointerMotionMask,
                                 GrabModeAsync, GrabModeAsync, None, None);
@@ -579,8 +578,9 @@ int main(void) {
                                 GrabModeAsync, GrabModeAsync, None, None);
                             XRaiseWindow(dpy, foc->win);
                         } else {
-                            tile();
+                            attach(curspace, foc);
                         }
+                        tile();
                     }
                     break;
 
