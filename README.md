@@ -1,4 +1,4 @@
-# jwm(1)
+# jotawm
 
 A minimal tiling window manager for X11.
 
