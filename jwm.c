@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <X11/Xatom.h>
+#include <X11/cursorfont.h>
 #include <X11/keysym.h>
 #include <X11/Xlib.h>
 #include <X11/XF86keysym.h>
@@ -313,6 +314,8 @@ int main(void) {
 #endif
 
     root = DefaultRootWindow(dpy);
+    Cursor cursor = XCreateFontCursor(dpy, XC_left_ptr);
+    XDefineCursor(dpy, root, cursor);
     XSetWindowBackground(dpy, root, BlackPixel(dpy, DefaultScreen(dpy)));
     XClearWindow(dpy, root);
 
