@@ -15,13 +15,13 @@ make
 sudo make install
 ```
 
-By default, the binary is installed to `/usr/local/bin/wm`.
+By default, the binary is installed to `/usr/bin/jwm`.
 
 ## Configuration
 
-Configuration is performed entirely at compile time by editing `wm.h`.
+Configuration is performed entirely at compile time by editing `jwm.h`.
 
-To modify the modifier key, default terminal, or keybindings, edit the `Configuration` block at the top of the source file. Recompile and restart `wm` to apply changes.
+To modify the modifier key, default terminal, or keybindings, edit the `Configuration` block at the top of the source file. Recompile and restart `jwm` to apply changes.
 
 The default modifier key (`Mod`) is set to `Mod4Mask` (Super/Windows key).
 

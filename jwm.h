@@ -1,6 +1,6 @@
 #define NSPACE     9
 #define NCLIENT    64       /* kept for compatibility; BSP has no hard cap */
-#define BARH       0
+#define BARH       24
 #define GAP        0        /* px gap around each window; set to e.g. 8 for gaps */
 
 enum { EXEC, VIEW, CYCLE, SWAP, SEND, RESIZE, FULLSCR, CLOSE, QUIT, FLOAT, SPLITDIR };
