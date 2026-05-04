@@ -158,50 +158,48 @@ static void raise_floats(Node *n) {
 
 static void attach(int s, Node *leaf) {
     leaf->par = NULL;
+    
+    /* If the workspace is empty, just insert and focus */
     if (!trees[s]) {
         trees[s] = leaf;
         focus[s] = leaf;
         return;
     }
 
-    /* 1. Get pointer position */
-    Window rw, cw;
-    int rx, ry, wx, wy;
+    Window root_ret, child_ret;
+    int root_x, root_y, win_x, win_y;
     unsigned int mask;
-    XQueryPointer(dpy, root, &rw, &cw, &rx, &ry, &wx, &wy, &mask);
+    Node *t = NULL;
 
-    /* 2. Find target node under cursor; fallback to focus */
-    Node *t = findleaf_at(trees[s], rx, ry);
-    if (!t) t = (focus[s] && focus[s]->leaf) ? focus[s] : firstleaf(trees[s]);
-
-    /* 3. Determine split side based on mouse quadrant */
-    int midx = t->x + t->w / 2;
-    int midy = t->y + t->h / 2;
-    int dx = rx - midx;
-    int dy = ry - midy;
-
-    Node *sp = calloc(1, sizeof *sp);
-    sp->ratio = 0.5f;
-    sp->par = t->par;
-
-    /* If horizontal distance from center is greater than vertical, split horizontally */
-    if (abs(dx) * t->h > abs(dy) * t->w) {
-        sp->horiz = 1;
-        if (dx < 0) { sp->a = leaf; sp->b = t; } // Split left
-        else        { sp->a = t; sp->b = leaf; } // Split right
-    } else {
-        sp->horiz = 0;
-        if (dy < 0) { sp->a = leaf; sp->b = t; } // Split top
-        else        { sp->a = t; sp->b = leaf; } // Split bottom
+    /* 1. Query the X server for the current pointer coordinates */
+    if (XQueryPointer(dpy, root, &root_ret, &child_ret, &root_x, &root_y, &win_x, &win_y, &mask)) {
+        /* 2. Traverse the BSP tree to find the node under the cursor */
+        t = findleaf_at(trees[s], root_x, root_y);
     }
 
+    /* 3. Fallback: if pointer is out of bounds or not found, default to focused/first leaf */
+    if (!t) {
+        t = (focus[s] && focus[s]->leaf) ? focus[s] : firstleaf(trees[s]);
+    }
+
+    /* Choose split direction based on the target cell's aspect ratio */
+    int horiz = (t->w > 0) ? (t->w >= t->h) : (scrw >= scrh);
+
+    Node *sp    = calloc(1, sizeof *sp);
+    sp->ratio   = 0.5f;
+    sp->horiz   = horiz;
+    sp->par     = t->par;
+    sp->a       = t;
+    sp->b       = leaf;
+
+    /* Wire up the new split node to the parent */
     if (!t->par)             trees[s] = sp;
     else if (t->par->a == t) t->par->a = sp;
     else                     t->par->b = sp;
 
-    t->par = sp;
+    t->par    = sp;
     leaf->par = sp;
-    focus[s] = leaf;
+    focus[s]  = leaf;
 }
 
 static void detach(int s, Node *n) {
