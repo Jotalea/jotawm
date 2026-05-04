@@ -217,25 +217,24 @@ static void tilenode(Node *n, int x, int y, int w, int h) {
 static void tile(void) {
     for (int s = 0; s < NSPACE; s++) {
         if (!trees[s]) continue;
-        if (s != curspace) {
-            int hide_x = (s < curspace) ? -scrw : scrw;
 
-            Node *stk[512]; int top = 0;
-            stk[top++] = trees[s];
-            while (top) {
-                Node *c = stk[--top];
-                if (c->leaf) XMoveWindow(dpy, c->win, hide_x, 0);
-                else { stk[top++] = c->a; stk[top++] = c->b; }
-            }
-        } else {
-            tilenode(trees[s], 0, BARH, scrw, scrh);
+        int x_offset = 0;
+        if (s != curspace) {
+            x_offset = (s < curspace) ? -scrw : scrw;
+        }
+
+        tilenode(trees[s], x_offset, BARH, scrw, scrh);
+
+        if (s == curspace) {
             raise_floats(trees[s]);
         }
     }
 
     Node *f = focus[curspace];
     XSetInputFocus(dpy, f ? f->win : root, RevertToPointerRoot, CurrentTime);
-    if (f) XRaiseWindow(dpy, f->win);
+    if (f) {
+        XRaiseWindow(dpy, f->win);
+    }
 
     XSync(dpy, False);
 }
@@ -263,6 +262,21 @@ static int rmwin(Window w) {
         return 1;
     }
     return 0;
+}
+
+static void closewin(Window w) {
+    Atom wm_delete = XInternAtom(dpy, "WM_DELETE_WINDOW", False);
+    Atom wm_protocols = XInternAtom(dpy, "WM_PROTOCOLS", False);
+    
+    XEvent ev;
+    ev.type = ClientMessage;
+    ev.xclient.window = w;
+    ev.xclient.message_type = wm_protocols;
+    ev.xclient.format = 32;
+    ev.xclient.data.l[0] = wm_delete;
+    ev.xclient.data.l[1] = CurrentTime;
+
+    XSendEvent(dpy, w, False, NoEventMask, &ev);
 }
 
 /* ── Extended Window Manager Hints ──────────────────────────────────────── */
@@ -301,9 +315,19 @@ int main(void) {
         SubstructureRedirectMask | SubstructureNotifyMask |
         KeyPressMask | ButtonPressMask | ButtonReleaseMask | PointerMotionMask);
 
-    for (size_t i = 0; i < NELEM(keys); i++) {
+    /* for (size_t i = 0; i < NELEM(keys); i++) {
         XGrabKey(dpy, XKeysymToKeycode(dpy, keys[i].sym), keys[i].mod,
             root, True, GrabModeAsync, GrabModeAsync);
+    } */
+
+    unsigned int modifiers[] = { 0, LockMask, Mod2Mask, LockMask|Mod2Mask }; // caps lock and num lock
+
+    for (size_t i = 0; i < NELEM(keys); i++) {
+        for (size_t j = 0; j < NELEM(modifiers); j++) {
+            XGrabKey(dpy, XKeysymToKeycode(dpy, keys[i].sym), 
+                 keys[i].mod | modifiers[j],
+                 root, True, GrabModeAsync, GrabModeAsync);
+        }
     }
 
     /* Grab mod+LMB and mod+RMB on root for float drag/resize */
@@ -508,7 +532,8 @@ int main(void) {
                     break;
 
                 case CLOSE:
-                    if (foc) XKillClient(dpy, foc->win);
+                    /* if (foc) XKillClient(dpy, foc->win); */
+                    if (foc) closewin(foc->win);
                     break;
 
                 case FULLSCR:
