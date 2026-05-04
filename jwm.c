@@ -89,6 +89,12 @@ static Node *mkleaf(Window w) {
     return n;
 }
 
+static Node *findleaf(Node *n, Window w) {
+    if (!n) return NULL;
+    if (n->leaf) return n->win == w ? n : NULL;
+    Node *r = findleaf(n->a, w);
+    return r ? r : findleaf(n->b, w);
+}
 
 static Node *findleaf_at(Node *n, int px, int py) {
     if (!n) return NULL;
