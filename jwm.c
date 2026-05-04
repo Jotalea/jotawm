@@ -167,12 +167,14 @@ static void attach(int s, Node *leaf) {
     }
 
     Window root_ret, child_ret;
-    int root_x, root_y, win_x, win_y;
+    int root_x = 0, root_y = 0, win_x, win_y;
     unsigned int mask;
     Node *t = NULL;
 
     /* 1. Query the X server for the current pointer coordinates */
-    if (XQueryPointer(dpy, root, &root_ret, &child_ret, &root_x, &root_y, &win_x, &win_y, &mask)) {
+    Bool pointer_valid = XQueryPointer(dpy, root, &root_ret, &child_ret, &root_x, &root_y, &win_x, &win_y, &mask);
+    
+    if (pointer_valid) {
         /* 2. Traverse the BSP tree to find the node under the cursor */
         t = findleaf_at(trees[s], root_x, root_y);
     }
@@ -189,8 +191,25 @@ static void attach(int s, Node *leaf) {
     sp->ratio   = 0.5f;
     sp->horiz   = horiz;
     sp->par     = t->par;
-    sp->a       = t;
-    sp->b       = leaf;
+
+    /* 4. Fix Focus Regression: Determine cursor's relative position */
+    int cursor_on_first_half = 0;
+    if (pointer_valid && t->w > 0) { /* Ensure geometry is cached */
+        if (horiz) {
+            cursor_on_first_half = (root_x < t->x + (int)(t->w * sp->ratio));
+        } else {
+            cursor_on_first_half = (root_y < t->y + (int)(t->h * sp->ratio));
+        }
+    }
+
+    /* 5. Dynamically assign nodes to keep the cursor resting on the new leaf */
+    if (cursor_on_first_half) {
+        sp->a = leaf; /* New window spawned Top/Left */
+        sp->b = t;    /* Old window pushed Bottom/Right */
+    } else {
+        sp->a = t;    /* Old window stays Top/Left */
+        sp->b = leaf; /* New window spawned Bottom/Right */
+    }
 
     /* Wire up the new split node to the parent */
     if (!t->par)             trees[s] = sp;
