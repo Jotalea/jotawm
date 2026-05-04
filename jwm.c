@@ -18,15 +18,15 @@
 typedef struct Node Node;
 struct Node {
     int    leaf;        /* 1 = window leaf, 0 = split node          */
-    int    isfull;      /* fullscreen (leaf only)                    */
-    int    isfloat;     /* floating   (leaf only)                    */
-    int    horiz;       /* split direction: 1=horizontal, 0=vertical */
-    float  ratio;       /* split ratio [0.1, 0.9]                    */
-    Node  *a, *b;       /* children (split only)                     */
-    Node  *par;         /* parent node, NULL for root                */
-    Window win;         /* X window (leaf only)                      */
-    /* cached geometry (set during tilenode, used by drag) */
-    int x, y, w, h;
+    int    isfull;      /* fullscreen (leaf only)                   */
+    int    isfloat;     /* floating   (leaf only)                   */
+    int    horiz;       /* split direction: 1=horizontal, 0=vertical*/
+    float  ratio;       /* split ratio [0.1, 0.9]                   */
+    Node  *a, *b;       /* children (split only)                    */
+    Node  *par;         /* parent node, NULL for root               */
+    Window win;         /* X window (leaf only)                     */
+    int x, y, w, h;     /* cached geometry                          */
+    int fx, fy, fw, fh; /* floating geometry                        */
 };
 
 /* ── Forward declarations ───────────────────────────────────────────────── */
@@ -223,15 +223,24 @@ static void detach(int s, Node *n) {
 
 /* ── Tiling ─────────────────────────────────────────────────────────────── */
 
+static int is_floating(Node *n) {
+    if (!n) return 1;
+    if (n->leaf) return n->isfloat;
+    return is_floating(n->a) && is_floating(n->b);
+}
+
 static void tilenode(Node *n, int x, int y, int w, int h) {
     if (!n) return;
     n->x = x; n->y = y; n->w = w; n->h = h;
 
     if (n->leaf) {
-        if (n->isfloat) return;   /* floats keep their own geometry */
+        if (n->isfloat) {
+            XMoveResizeWindow(dpy, n->win, n->fx + x_offset, n->fy, n->fw, n->fh);
+            return;
+        }
 
         if (n->isfull) {
-            XMoveResizeWindow(dpy, n->win, 0, BARH, scrw, scrh);
+            XMoveResizeWindow(dpy, n->win, x_offset, BARH, scrw, scrh);
             return;
         }
 
@@ -245,14 +254,23 @@ static void tilenode(Node *n, int x, int y, int w, int h) {
         return;
     }
 
-    if (n->horiz) {
-        int wa = (int)(w * n->ratio);
-        tilenode(n->a, x,      y, wa,    h);
-        tilenode(n->b, x + wa, y, w - wa, h);
+    int a_float = is_floating(n->a);
+    int b_float = is_floating(n->b);
+
+    /* If a child is floating, give 100% of the space to the other child */
+    if (a_float || b_float) {
+        tilenode(n->a, x, y, w, h, x_offset);
+        tilenode(n->b, x, y, w, h, x_offset);
     } else {
-        int ha = (int)(h * n->ratio);
-        tilenode(n->a, x, y,      w, ha);
-        tilenode(n->b, x, y + ha, w, h - ha);
+        if (n->horiz) {
+            int wa = (int)(w * n->ratio);
+            tilenode(n->a, x,      y, wa,    h);
+            tilenode(n->b, x + wa, y, w - wa, h);
+        } else {
+            int ha = (int)(h * n->ratio);
+            tilenode(n->a, x, y,      w, ha);
+            tilenode(n->b, x, y + ha, w, h - ha);
+        }
     }
 }
 
@@ -265,7 +283,7 @@ static void tile(void) {
             x_offset = (s < curspace) ? -scrw : scrw;
         }
 
-        tilenode(trees[s], x_offset, BARH, scrw, scrh);
+        tilenode(trees[s], x_offset, BARH, scrw, scrh, x_offset);
 
         if (s == curspace) {
             raise_floats(trees[s]);
@@ -518,6 +536,9 @@ int main(void) {
                 if (ny < 0) ny = 0;
                 if (nx + drag_ww > scrw) nx = scrw - drag_ww;
                 if (ny + drag_wh > scrh) ny = scrh - drag_wh;
+                
+                drag_node->fx = nx;
+                drag_node->fy = ny;
                 XMoveWindow(dpy, drag_node->win, nx, ny);
             } else {
                 /* Resize */
@@ -527,6 +548,9 @@ int main(void) {
                 if (nh < MINSIZE) nh = MINSIZE;
                 if (drag_wx + nw > scrw) nw = scrw - drag_wx;
                 if (drag_wy + nh > scrh) nh = scrh - drag_wy;
+                
+                drag_node->fw = nw;
+                drag_node->fh = nh;
                 XResizeWindow(dpy, drag_node->win, nw, nh);
             }
             break;
@@ -561,6 +585,7 @@ int main(void) {
                         if (focus[curspace]) setfocus(focus[curspace]);
                     }
                     break;
+
                 case CYCLE:
                     if (trees[curspace]) {
                         Node *n = (a.i > 0)
@@ -593,11 +618,12 @@ int main(void) {
                     if (foc) {
                         foc->isfloat ^= 1;
                         if (foc->isfloat) {
-                            detach(curspace, foc); 
-                            int fw = scrw / 2, fh = scrh / 2;
-                            int fx = (scrw - fw) / 2;
-                            int fy = BARH + (scrh - fh) / 2;
-                            XMoveResizeWindow(dpy, foc->win, fx, fy, fw, fh);
+                            foc->fw = scrw / 2;
+                            foc->fh = scrh / 2;
+                            foc->fx = (scrw - foc->fw) / 2;
+                            foc->fy = BARH + (scrh - foc->fh) / 2;
+
+                            XMoveResizeWindow(dpy, foc->win, foc->fx, foc->fy, foc->fw, foc->fh);
                             XGrabButton(dpy, Button1, MODKEY, foc->win, False,
                                 ButtonPressMask | ButtonReleaseMask | PointerMotionMask,
                                 GrabModeAsync, GrabModeAsync, None, None);
@@ -605,8 +631,6 @@ int main(void) {
                                 ButtonPressMask | ButtonReleaseMask | PointerMotionMask,
                                 GrabModeAsync, GrabModeAsync, None, None);
                             XRaiseWindow(dpy, foc->win);
-                        } else {
-                            attach(curspace, foc);
                         }
                         tile();
                     }
