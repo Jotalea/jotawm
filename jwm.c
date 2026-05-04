@@ -31,7 +31,7 @@ struct Node {
 
 /* ── Forward declarations ───────────────────────────────────────────────── */
 
-static void tilenode(Node *n, int x, int y, int w, int h);
+static void tilenode(Node *n, int x, int y, int w, int h, int x_offset);
 static void tile(void);
 static void setfocus(Node *n);
 static void detach(int s, Node *n);
@@ -229,7 +229,7 @@ static int is_floating(Node *n) {
     return is_floating(n->a) && is_floating(n->b);
 }
 
-static void tilenode(Node *n, int x, int y, int w, int h) {
+static void tilenode(Node *n, int x, int y, int w, int h, int x_offset) {
     if (!n) return;
     n->x = x; n->y = y; n->w = w; n->h = h;
 
@@ -264,12 +264,12 @@ static void tilenode(Node *n, int x, int y, int w, int h) {
     } else {
         if (n->horiz) {
             int wa = (int)(w * n->ratio);
-            tilenode(n->a, x,      y, wa,    h);
-            tilenode(n->b, x + wa, y, w - wa, h);
+            tilenode(n->a, x,      y, wa,    h, x_offset);
+            tilenode(n->b, x + wa, y, w - wa, h, x_offset);
         } else {
             int ha = (int)(h * n->ratio);
-            tilenode(n->a, x, y,      w, ha);
-            tilenode(n->b, x, y + ha, w, h - ha);
+            tilenode(n->a, x, y,      w, ha, x_offset);
+            tilenode(n->b, x, y + ha, w, h - ha, x_offset);
         }
     }
 }
@@ -481,7 +481,7 @@ int main(void) {
                     focus[curspace] = n;
                     setfocus(n);
 
-                    Window dw; int rx, ry; unsigned gw, gh, gb, gd;
+                    Window dw; unsigned gw, gh, gb, gd;
                     XGetGeometry(dpy, n->win, &dw,
                         &drag_wx, &drag_wy, &gw, &gh, &gb, &gd);
                     drag_ww  = (int)gw;
