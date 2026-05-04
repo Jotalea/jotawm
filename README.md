@@ -35,15 +35,15 @@ The default terminal is `kitty`, and the default menu is `dmenu_run`. Ensure the
 ## Usage
 
 * **Mod + t** : Spawn terminal
-* **Mod + a** : Spawn application menu
+* **Mod + Space** : Spawn application menu
 * **Mod + kLeft / kRight** : Focus next / previous window
 * **Mod + Shit + kLeft / kRight** : Move focused window left / right
 * **Mod + Alt + kLeft / kRight** : Shrink / expand the master area
 * **Mod + f** : Toggle fullscreen for the focused window
 * **Mod + q** : Kill the focused window
-* **Mod + q + Shift** : Quit wm
+* **Mod + Shift + q** : Quit wm
 * **Mod + [1-9]** : Switch to workspace N
-* **Mod + [1-9] + Shift**: Move focused window to workspace N
+* **Mod + Shift + [1-9]**: Move focused window to workspace N
 
 ## Running
 
@@ -56,14 +56,14 @@ exec jwm
 
 ### Display Manager
 
-`jwm` installs a desktop file to `/usr/local/share/xsessions/jwm.desktop`, so it should appear as an option in most display managers (GDM, LightDM, SDDM, etc.).
+`jwm` installs a desktop file to `/usr/share/xsessions/jwm.desktop`, so it should appear as an option in most display managers (Ly, GDM, LightDM, SDDM, etc.).
 
 ## Recommended software
 this is software that i personally recommend to use with jwm
 - [pulseaudio](http://anongit.freedesktop.org/git/pulseaudio/pulseaudio.git)
 - [brightnessctl](https://github.com/Hummer12007/brightnessctl.git)
-- [xnap](https://github.com/uint23/xnap.git)
-- [slstatus](https://git.suckless.org/slstatus)
+- [polybar](https://github.com/polybar/polybar)
+- [this picom fork](https://github.com/fdev31/picom)
 
 ## License
 
