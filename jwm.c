@@ -6,7 +6,6 @@
 #include <X11/cursorfont.h>
 #include <X11/keysym.h>
 #include <X11/Xlib.h>
-#include <X11/Xutil.h>
 #include <X11/XF86keysym.h>
 
 #include "jwm.h"
@@ -153,58 +152,6 @@ static void raise_floats(Node *n) {
     if (n->leaf) { if (n->isfloat) XRaiseWindow(dpy, n->win); return; }
     raise_floats(n->a);
     raise_floats(n->b);
-}
-
-/* Check if a coordinate space overlaps with any existing floating windows */
-static int check_float_collision(Node *tree, Node *exclude, int x, int y, int w, int h) {
-    if (!tree) return 0;
-    if (tree->leaf) {
-        if (tree->isfloat && tree != exclude) {
-            /* Simple bounding box intersection */
-            if (x < tree->fx + tree->fw && x + w > tree->fx &&
-                y < tree->fy + tree->fh && y + h > tree->fy) {
-                return 1;
-            }
-        }
-        return 0;
-    }
-    return check_float_collision(tree->a, exclude, x, y, w, h) ||
-           check_float_collision(tree->b, exclude, x, y, w, h);
-}
-
-/* Find empty space for a new floating window, fallback to center if full */
-static void place_float_non_overlapping(Node *n) {
-    int placed = 0;
-    for (int y = BARH; y < scrh - n->fh && !placed; y += 20) {
-        for (int x = 0; x < scrw - n->fw && !placed; x += 20) {
-            if (!check_float_collision(trees[curspace], n, x, y, n->fw, n->fh)) {
-                n->fx = x; n->fy = y;
-                placed = 1;
-            }
-        }
-    }
-    if (!placed) {
-        n->fx = (scrw - n->fw) / 2;
-        n->fy = BARH + (scrh - n->fh) / 2;
-    }
-}
-
-/* Check if a window class matches our array in jwm.h */
-static int should_float(Window w) {
-    XClassHint ch;
-    int ret = 0;
-    if (XGetClassHint(dpy, w, &ch)) {
-        for (size_t i = 0; i < NELEM(floatclasses); i++) {
-            if ((ch.res_name && strstr(ch.res_name, floatclasses[i])) ||
-                (ch.res_class && strstr(ch.res_class, floatclasses[i]))) {
-                ret = 1;
-                break;
-            }
-        }
-        if (ch.res_name) XFree(ch.res_name);
-        if (ch.res_class) XFree(ch.res_class);
-    }
-    return ret;
 }
 
 /* ── Attach / detach ────────────────────────────────────────────────────── */
@@ -379,7 +326,6 @@ static void setfocus(Node *n) {
     XSetInputFocus(dpy, n->win, RevertToPointerRoot, CurrentTime);
     XRaiseWindow(dpy, n->win);
     raise_floats(trees[curspace]);
-    if (n->isfloat) XRaiseWindow(dpy, n->win);
     XSync(dpy, False);
 }
 
@@ -505,15 +451,6 @@ int main(void) {
 
             Node *leaf = mkleaf(w);
             XSelectInput(dpy, w, EnterWindowMask | StructureNotifyMask);
-            
-            /* Apply default float overrides and place them without overlap */
-            if (should_float(w)) {
-                leaf->isfloat = 1;
-                leaf->fw = wa.width > MINSIZE ? wa.width : scrw / 2;
-                leaf->fh = wa.height > MINSIZE ? wa.height : scrh / 2;
-                place_float_non_overlapping(leaf);
-            }
-
             /* Grab mod+buttons on the window itself for float interaction */
             XGrabButton(dpy, Button1, MODKEY, w, False,
                 ButtonPressMask | ButtonReleaseMask | PointerMotionMask,
@@ -635,12 +572,10 @@ int main(void) {
                 if (ny < 0) ny = 0;
                 if (nx + drag_ww > scrw) nx = scrw - drag_ww;
                 if (ny + drag_wh > scrh) ny = scrh - drag_wh;
-
-                if (!check_float_collision(trees[curspace], drag_node, nx, ny, drag_ww, drag_wh)) {
-                    drag_node->fx = nx;
-                    drag_node->fy = ny;
-                    XMoveWindow(dpy, drag_node->win, nx, ny);
-                }
+                
+                drag_node->fx = nx;
+                drag_node->fy = ny;
+                XMoveWindow(dpy, drag_node->win, nx, ny);
             } else {
                 /* Resize */
                 int nw = drag_ww + dx;
@@ -649,12 +584,10 @@ int main(void) {
                 if (nh < MINSIZE) nh = MINSIZE;
                 if (drag_wx + nw > scrw) nw = scrw - drag_wx;
                 if (drag_wy + nh > scrh) nh = scrh - drag_wy;
-
-                if (!check_float_collision(trees[curspace], drag_node, drag_wx, drag_wy, nw, nh)) {
-                    drag_node->fw = nw;
-                    drag_node->fh = nh;
-                    XResizeWindow(dpy, drag_node->win, nw, nh);
-                }
+                
+                drag_node->fw = nw;
+                drag_node->fh = nh;
+                XResizeWindow(dpy, drag_node->win, nw, nh);
             }
             break;
         }
@@ -732,11 +665,8 @@ int main(void) {
                         if (foc->isfloat) {
                             foc->fw = scrw / 2;
                             foc->fh = scrh / 2;
-                            place_float_non_overlapping(foc);
-/*
                             foc->fx = (scrw - foc->fw) / 2;
                             foc->fy = BARH + (scrh - foc->fh) / 2;
-*/
 
                             XMoveResizeWindow(dpy, foc->win, foc->fx, foc->fy, foc->fw, foc->fh);
                             XGrabButton(dpy, Button1, MODKEY, foc->win, False,
