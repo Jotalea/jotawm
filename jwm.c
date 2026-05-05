@@ -722,6 +722,18 @@ int main(void) {
                     }
                     break;
 
+                case VIEW_ADJ: {
+                    int next = curspace + a.i;
+                    if (next >= 0 && next < NSPACE) {
+                        prevspace = curspace;
+                        curspace = next;
+                        update_ewmh_desktop();
+                        tile();
+                        if (focus[curspace]) setfocus(focus[curspace]);
+                    }
+                    break;
+                }
+
                 case SPLITDIR:
                     /* Toggle the split direction of the focused node's parent */
                     if (foc && foc->par) {

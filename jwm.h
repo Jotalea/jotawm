@@ -3,7 +3,7 @@
 #define BARH       24
 #define GAP        0        /* px gap around each window; set to e.g. 8 for gaps */
 
-enum { EXEC, VIEW, CYCLE, SWAP, SEND, RESIZE, FULLSCR, CLOSE, QUIT, FLOAT, SPLITDIR };
+enum { EXEC, VIEW, CYCLE, SWAP, SEND, RESIZE, FULLSCR, CLOSE, QUIT, FLOAT, SPLITDIR, VIEW_ADJ };
 
 typedef union  { int i; float f; const char **v; } Arg;
 typedef struct { unsigned int mod; KeySym sym; int act; Arg arg; } Key;
@@ -70,5 +70,7 @@ static Key keys[] = {
         BR(XF86XK_MonBrightnessDown, "5%-"),
 
         /* workspaces */
+        { MODKEY,        XK_Page_Down, VIEW_ADJ, {.i = +1}       },
+        { MODKEY,        XK_Page_Up,   VIEW_ADJ, {.i = -1}       },
         WS(1), WS(2), WS(3), WS(4), WS(5), WS(6), WS(7), WS(8), WS(9),
 };
