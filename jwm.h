@@ -13,6 +13,9 @@ typedef struct { unsigned int mod; KeySym sym; int act; Arg arg; } Key;
 #define MODKEY  Mod4Mask
 #define SHTKEY  ShiftMask
 
+/* windows that float by default */
+static const char *floatclasses[] = { "Steam", "steam" }; /* steam is very problematic */
+
 /* shell commands */
 static const char *termcmd[] = { "kitty",   NULL };
 static const char *menucmd[] = { "dmenu_run", NULL };
