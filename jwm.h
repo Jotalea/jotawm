@@ -15,7 +15,7 @@ typedef struct { unsigned int mod; KeySym sym; int act; Arg arg; } Key;
 
 /* shell commands */
 static const char *termcmd[] = { "kitty",   NULL };
-static const char *menucmd[] = { "dmenu_run", NULL };
+static const char *menucmd[] = { "rofi", "-show", "drun", NULL };
 static const char *scrscmd[] = { "/bin/sh", "-c",
     "maim | xclip -selection clipboard -t image/png", NULL };
 static const char *browcmd[] = { "firefox", NULL };
