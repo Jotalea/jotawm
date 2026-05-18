@@ -343,6 +343,8 @@ static void tile(void) {
 
 static void setfocus(Node *n) {
     if (!n || !n->leaf) return;
+    XUngrabPointer(dpy, CurrentTime);
+    XUngrabKeyboard(dpy, CurrentTime);
     focus[curspace] = n;
     XSetInputFocus(dpy, n->win, RevertToPointerRoot, CurrentTime);
     XRaiseWindow(dpy, n->win);
@@ -427,8 +429,15 @@ int main(void) {
     XChangeProperty(dpy, root, net_desks, XA_CARDINAL, 32, PropModeReplace, (unsigned char *)&ndesks, 1);
     update_ewmh_desktop();
 
+    disph = DisplayHeight(dpy, 0);
     scrw = DisplayWidth(dpy, 0);
-    scrh = DisplayHeight(dpy, 0) - BARH;
+    scrh = disph - BARH;
+
+    net_wm_state = XInternAtom(dpy, "_NET_WM_STATE", False);
+    net_wm_state_full = XInternAtom(dpy, "_NET_WM_STATE_FULLSCREEN", False);
+
+    edgewin = XCreateWindow(dpy, root, 0, (BAR_POS == 0) ? 0 : disph - 1, scrw, 1, 0, 0, InputOnly, CopyFromParent, 0, NULL);
+    XSelectInput(dpy, edgewin, EnterWindowMask);
 
     XSelectInput(dpy, root,
         SubstructureRedirectMask | SubstructureNotifyMask |
@@ -470,8 +479,30 @@ int main(void) {
             Window w = ev.xmaprequest.window;
             if (!XGetWindowAttributes(dpy, w, &wa) || wa.override_redirect) break;
 
+            int is_float = 0;
+            XClassHint ch;
+            if (XGetClassHint(dpy, w, &ch)) {
+                for (size_t i = 0; i < NELEM(rules); i++) {
+                    if ((ch.res_class && strstr(ch.res_class, rules[i].class)) ||
+                        (ch.res_name && strstr(ch.res_name, rules[i].class))) {
+                        is_float = rules[i].isfloat;
+                        break;
+                    }
+                }
+                if (ch.res_class) XFree(ch.res_class);
+                if (ch.res_name) XFree(ch.res_name);
+            }
+
             Node *leaf = mkleaf(w);
+            leaf->isfloat = is_float;
+
+            if (is_float) {
+                leaf->fw = scrw / 2; leaf->fh = scrh / 2;
+                leaf->fx = (scrw - leaf->fw) / 2; leaf->fy = BARH + (scrh - leaf->fh) / 2;
+            }
+
             XSelectInput(dpy, w, EnterWindowMask | StructureNotifyMask);
+
             /* Grab mod+buttons on the window itself for float interaction */
             XGrabButton(dpy, Button1, MODKEY, w, False,
                 ButtonPressMask | ButtonReleaseMask | PointerMotionMask,
@@ -517,11 +548,22 @@ int main(void) {
         case EnterNotify:
             if (ev.xcrossing.mode != NotifyNormal ||
                 ev.xcrossing.detail == NotifyInferior) break;
+
+            if (ev.xcrossing.window == edgewin) {
+                if (!barwin) find_bar();
+                if (barwin) XRaiseWindow(dpy, barwin);
+                break;
+            }
+
             {
                 Node *n = findleaf(trees[curspace], ev.xcrossing.window);
-                if (n && n != focus[curspace]) {
-                    focus[curspace] = n;
-                    setfocus(n);
+                if (n) {
+                    if (n->isfull && barwin) XLowerWindow(dpy, barwin);
+                    
+                    if (n != focus[curspace]) {
+                        focus[curspace] = n;
+                        setfocus(n);
+                    }
                 }
             }
             break;
@@ -676,6 +718,16 @@ int main(void) {
                 case FULLSCR:
                     if (foc) {
                         foc->isfull ^= 1;
+                        if (foc->isfull) {
+                            XChangeProperty(dpy, foc->win, net_wm_state, XA_ATOM, 32, PropModeReplace, (unsigned char*)&net_wm_state_full, 1);
+                            XMapRaised(dpy, edgewin);
+                            if (!barwin) find_bar();
+                            if (barwin) XLowerWindow(dpy, barwin);
+                        } else {
+                            XChangeProperty(dpy, foc->win, net_wm_state, XA_ATOM, 32, PropModeReplace, (unsigned char*)0, 0);
+                            XUnmapWindow(dpy, edgewin);
+                            if (barwin) XRaiseWindow(dpy, barwin);
+                        }
                         tile();
                     }
                     break;
