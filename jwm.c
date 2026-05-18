@@ -1,6 +1,7 @@
 #include <err.h>
 #include <signal.h>
 #include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
 #include <X11/cursorfont.h>
 #include <X11/keysym.h>

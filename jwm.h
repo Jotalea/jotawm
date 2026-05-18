@@ -1,6 +1,7 @@
 #define NSPACE     9
 #define NCLIENT    64       /* kept for compatibility; BSP has no hard cap */
 #define BARH       24
+#define BAR_POS    0        /* 0 for top, 1 for bottom */
 #define GAP        0        /* px gap around each window; set to e.g. 8 for gaps */
 
 /* window rules */
