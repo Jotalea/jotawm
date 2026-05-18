@@ -3,6 +3,19 @@
 #define BARH       24
 #define GAP        0        /* px gap around each window; set to e.g. 8 for gaps */
 
+/* window rules */
+typedef struct {
+    const char *class;
+    int isfloat;
+} Rule;
+
+static Rule rules[] = {
+    /* class name       isfloat */
+    { "pavucontrol",    1 },
+    { "lutris",         1 },
+    { "Steam",          1 },
+};
+
 enum { EXEC, VIEW, CYCLE, SWAP, SEND, RESIZE, FULLSCR, CLOSE, QUIT, FLOAT, SPLITDIR, VIEW_ADJ };
 
 typedef union  { int i; float f; const char **v; } Arg;

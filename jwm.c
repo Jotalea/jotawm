@@ -2,11 +2,12 @@
 #include <signal.h>
 #include <stdlib.h>
 #include <unistd.h>
-#include <X11/Xatom.h>
 #include <X11/cursorfont.h>
 #include <X11/keysym.h>
-#include <X11/Xlib.h>
+#include <X11/Xatom.h>
 #include <X11/XF86keysym.h>
+#include <X11/Xlib.h>
+#include <X11/Xutil.h>
 
 #include "jwm.h"
 
@@ -47,6 +48,9 @@ static Display *dpy;
 static Window   root;
 static int scrw, scrh, curspace, running = 1;
 static int prevspace = 0;
+static int disph;
+static Window barwin = 0, edgewin = 0;
+static Atom net_wm_state, net_wm_state_full;
 
 /* One BSP tree + focused leaf per workspace */
 static Node *trees[NSPACE];
@@ -248,6 +252,23 @@ static int is_floating(Node *n) {
     return is_floating(n->a) && is_floating(n->b);
 }
 
+static void find_bar(void) {
+    Window root_ret, parent_ret, *children;
+    unsigned int nchildren;
+    if (XQueryTree(dpy, root, &root_ret, &parent_ret, &children, &nchildren)) {
+        for (unsigned int i = 0; i < nchildren; i++) {
+            XWindowAttributes wa;
+            if (XGetWindowAttributes(dpy, children[i], &wa) && wa.override_redirect && wa.height == BARH) {
+                if ((BAR_POS == 0 && wa.y == 0) || (BAR_POS == 1 && wa.y == disph - BARH)) {
+                    barwin = children[i];
+                    break;
+                }
+            }
+        }
+        if (children) XFree(children);
+    }
+}
+
 static void tilenode(Node *n, int x, int y, int w, int h, int x_offset) {
     if (!n) return;
     n->x = x; n->y = y; n->w = w; n->h = h;
@@ -259,7 +280,7 @@ static void tilenode(Node *n, int x, int y, int w, int h, int x_offset) {
         }
 
         if (n->isfull) {
-            XMoveResizeWindow(dpy, n->win, x_offset, BARH, scrw, scrh);
+            XMoveResizeWindow(dpy, n->win, x_offset, 0, scrw, disph);
             return;
         }
 
