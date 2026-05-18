@@ -1,7 +1,7 @@
 [Desktop Entry]
 Comment[en_US]=minimalist tiling window manager
 Comment=minimalist tiling window manager
-Exec=jwm
+Exec=jwm-session
 GenericName[en_US]=window manager
 GenericName=window manager
 MimeType=
