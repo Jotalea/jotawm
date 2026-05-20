@@ -78,6 +78,7 @@ jobs:
     needs: [build, release]
     runs-on: ubuntu-latest
     if: always() && github.ref == 'refs/heads/main' && github.event_name == 'push'
+    environment: build
     steps:
       - uses: actions/checkout@v4
         with:
@@ -89,6 +90,10 @@ jobs:
           VERSION: ${{ needs.build.outputs.version }}
           RELEASE_RESULT: ${{ needs.release.result }}
         run: |
+          if [ -z "$DISCORD_WEBHOOK" ]; then
+            echo "warning: DISCORD_WEBHOOK is not configured. skipping notification."
+            exit 0
+          fi
           SHORT_SHA="${{ github.sha }}"
           SHORT_SHA="${SHORT_SHA:0:7}"
           BRANCH="${{ github.ref_name }}"
