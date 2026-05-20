@@ -58,3 +58,4 @@ dkms.conf
 
 # already compiled binaries
 jwm
+jwm-session

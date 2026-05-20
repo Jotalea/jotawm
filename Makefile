@@ -7,13 +7,16 @@ LDFLAGS = -L$(X11LIB) -lX11
 
 CC      = cc
 
-all: jwm
+all: jwm jwm-session
 
 jwm: jwm.c jwm.h
 	$(CC) $(CFLAGS) -o $@ jwm.c $(LDFLAGS)
 
+jwm-session: jwm-session.c
+	$(CC) $(CFLAGS) -o $@ jwm-session.c
+
 clean:
-	rm -f jwm
+	rm -f jwm jwm-session
 
 install: all
 	mkdir -p $(DESTDIR)$(PREFIX)/bin
