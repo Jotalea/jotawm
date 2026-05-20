@@ -4,11 +4,18 @@ on:
   push:
   pull_request:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Install dependencies
         run: sudo apt-get install -y libx11-dev
@@ -18,3 +25,120 @@ jobs:
 
       - name: Verify binaries exist
         run: test -x jwm && test -x jwm-session
+
+      - name: Generate version
+        id: version
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          DATE=$(date +%Y.%-m.%-d)
+          COUNT=$(gh release list --limit 100 --json tagName --jq '.[].tagName' 2>/dev/null | grep -c "^${DATE}-" || true)
+          COUNT=${COUNT:-0}
+          COUNT=$((COUNT + 1))
+          echo "version=${DATE}-$(printf '%03d' $COUNT)" >> $GITHUB_OUTPUT
+
+      - name: Upload binaries
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        uses: actions/upload-artifact@v4
+        with:
+          name: binaries
+          path: |
+            jwm
+            jwm-session
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Download binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: binaries
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          chmod +x jwm jwm-session
+          git log -1 --pretty=format:"## %s%n%n%b" > release-notes.md
+          gh release create "$VERSION" \
+            --title "jotawm $VERSION" \
+            --notes-file release-notes.md \
+            --prerelease \
+            jwm jwm-session
+
+  notify:
+    needs: [build, release]
+    runs-on: ubuntu-latest
+    if: always() && github.ref == 'refs/heads/main' && github.event_name == 'push'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Send Discord notification
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+          VERSION: ${{ needs.build.outputs.version }}
+          RELEASE_RESULT: ${{ needs.release.result }}
+        run: |
+          SHORT_SHA="${{ github.sha }}"
+          SHORT_SHA="${SHORT_SHA:0:7}"
+          BRANCH="${{ github.ref_name }}"
+          ACTOR="${{ github.actor }}"
+          REPO="${{ github.repository }}"
+          COMMIT_SHA="${{ github.sha }}"
+
+          COMMIT_MSG=$(git log -1 --pretty=format:"%s")
+          COMMIT_BODY=$(git log -1 --pretty=format:"%b")
+          DIFF_STAT=$(git diff --stat HEAD~1 HEAD 2>/dev/null | tail -1 || true)
+          FILES=$(git diff --name-only HEAD~1 HEAD 2>/dev/null | head -20 | sed 's/^/`/' | sed 's/$/`/' | paste -sd ' ')
+
+          if [ "$RELEASE_RESULT" = "success" ]; then
+            COLOR=3066993
+            RELEASE_FIELD="[\`${VERSION}\`](https://github.com/${REPO}/releases/tag/${VERSION})"
+          else
+            COLOR=15158332
+            RELEASE_FIELD="failed"
+          fi
+
+          DESC=$(printf '%s' "$COMMIT_BODY")
+          if [ -n "$DIFF_STAT" ]; then
+            [ -n "$DESC" ] && DESC=$(printf '%s\n\n' "$DESC")
+            DESC=$(printf '%s**%s**' "$DESC" "$DIFF_STAT")
+          fi
+          [ -z "$FILES" ] && FILES="none"
+
+          jq -n \
+            --arg title "[$SHORT_SHA] $COMMIT_MSG" \
+            --arg commit_url "https://github.com/${REPO}/commit/${COMMIT_SHA}" \
+            --arg desc "$DESC" \
+            --arg actor "$ACTOR" \
+            --arg branch "$BRANCH" \
+            --arg release "$RELEASE_FIELD" \
+            --arg files "$FILES" \
+            --argjson color "$COLOR" \
+            '{
+              embeds: [{
+                title: $title,
+                url: $commit_url,
+                color: $color,
+                description: (if $desc == "" then null else $desc end),
+                fields: [
+                  {name: "Release", value: $release, inline: true},
+                  {name: "Author", value: $actor, inline: true},
+                  {name: "Branch", value: $branch, inline: true},
+                  {name: "Files changed", value: $files, inline: false}
+                ],
+                footer: {text: "jotawm CI"}
+              }]
+            }' | curl -sf -X POST "$DISCORD_WEBHOOK" \
+              -H "Content-Type: application/json" \
+              -d @-
