@@ -71,19 +71,6 @@ static int xerror(Display *d, XErrorEvent *e) {
     return 0;
 }
 
-/* ── Autostart script ───────────────────────────────────────────────────── */
-
-static void autostart(void) {
-    if (fork() == 0) {
-        if (dpy) close(ConnectionNumber(dpy));
-        setsid();
-        /* Change this path to wherever your script is located */
-        char *cmd[] = { "/bin/sh", "-c", "~/.jotalea/jwm.sh", NULL };
-        execvp(cmd[0], cmd);
-        _exit(0);
-    }
-}
-
 /* ── BSP helpers ────────────────────────────────────────────────────────── */
 
 static Node *mkleaf(Window w) {
@@ -468,8 +455,6 @@ int main(void) {
         GrabModeAsync, GrabModeAsync, None, None);
 
     signal(SIGCHLD, SIG_IGN);
-
-    autostart();
 
     while (running && !XNextEvent(dpy, &ev)) {
         switch (ev.type) {
