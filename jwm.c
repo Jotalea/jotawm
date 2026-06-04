@@ -33,7 +33,13 @@ struct Node {
 
 /* ── Forward declarations ───────────────────────────────────────────────── */
 
-static void tilenode(Node *n, int x, int y, int w, int h, int x_offset);
+#define EDGE_L 1
+#define EDGE_R 2
+#define EDGE_T 4
+#define EDGE_B 8
+#define EDGE_ALL (EDGE_L|EDGE_R|EDGE_T|EDGE_B)
+
+static void tilenode(Node *n, int x, int y, int w, int h, int x_offset, int edges);
 static void tile(void);
 static void setfocus(Node *n);
 static void detach(int s, Node *n);
@@ -257,7 +263,7 @@ static void find_bar(void) {
     }
 }
 
-static void tilenode(Node *n, int x, int y, int w, int h, int x_offset) {
+static void tilenode(Node *n, int x, int y, int w, int h, int x_offset, int edges) {
     if (!n) return;
     n->x = x; n->y = y; n->w = w; n->h = h;
 
@@ -272,10 +278,15 @@ static void tilenode(Node *n, int x, int y, int w, int h, int x_offset) {
             return;
         }
 
-        int gx = x + GAP;
-        int gy = y + GAP;
-        int gw = w - 2 * GAP;
-        int gh = h - 2 * GAP;
+        int gl = (edges & EDGE_L) ? GAP_OUTER : GAP_INNER;
+        int gr = (edges & EDGE_R) ? GAP_OUTER : GAP_INNER;
+        int gt = (edges & EDGE_T) ? GAP_OUTER : GAP_INNER;
+        int gb = (edges & EDGE_B) ? GAP_OUTER : GAP_INNER;
+
+        int gx = x + gl;
+        int gy = y + gt;
+        int gw = w - gl - gr;
+        int gh = h - gt - gb;
         if (gw < 1) gw = 1;
         if (gh < 1) gh = 1;
         XMoveResizeWindow(dpy, n->win, gx, gy, gw, gh);
@@ -287,17 +298,17 @@ static void tilenode(Node *n, int x, int y, int w, int h, int x_offset) {
 
     /* If a child is floating, give 100% of the space to the other child */
     if (a_float || b_float) {
-        tilenode(n->a, x, y, w, h, x_offset);
-        tilenode(n->b, x, y, w, h, x_offset);
+        tilenode(n->a, x, y, w, h, x_offset, edges);
+        tilenode(n->b, x, y, w, h, x_offset, edges);
     } else {
         if (n->horiz) {
             int wa = (int)(w * n->ratio);
-            tilenode(n->a, x,      y, wa,    h, x_offset);
-            tilenode(n->b, x + wa, y, w - wa, h, x_offset);
+            tilenode(n->a, x,      y, wa,     h, x_offset, edges & ~EDGE_R);
+            tilenode(n->b, x + wa, y, w - wa, h, x_offset, edges & ~EDGE_L);
         } else {
             int ha = (int)(h * n->ratio);
-            tilenode(n->a, x, y,      w, ha, x_offset);
-            tilenode(n->b, x, y + ha, w, h - ha, x_offset);
+            tilenode(n->a, x, y,      w, ha,     x_offset, edges & ~EDGE_B);
+            tilenode(n->b, x, y + ha, w, h - ha, x_offset, edges & ~EDGE_T);
         }
     }
 }
@@ -311,7 +322,7 @@ static void tile(void) {
             x_offset = (s < curspace) ? -scrw : scrw;
         }
 
-        tilenode(trees[s], x_offset, BARH, scrw, scrh, x_offset);
+        tilenode(trees[s], x_offset, BARH, scrw, scrh, x_offset, EDGE_ALL);
 
         if (s == curspace) {
             raise_floats(trees[s]);
