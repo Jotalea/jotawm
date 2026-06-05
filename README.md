@@ -5,7 +5,7 @@ A minimal tiling window manager for X11.
 ## Showcase
 
 - [screenshots](https://imgur.com/a/sf0llvp)
-- [animations](https://www.youtube.com/watch?v=pJ3VZGY-KsU)
+- [animations](https://www.youtube.com/watch?v=1O3XxlL_rVc)
 
 ## Dependencies
 
