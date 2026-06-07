@@ -24,7 +24,7 @@ jobs:
         run: make
 
       - name: Verify binaries exist
-        run: test -x jwm && test -x jwm-session
+        run: test -x jotawm && test -x jotawm-session
 
       - name: Generate version
         id: version
@@ -44,8 +44,8 @@ jobs:
         with:
           name: binaries
           path: |
-            jwm
-            jwm-session
+            jotawm
+            jotawm-session
 
   release:
     needs: build
@@ -66,13 +66,13 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ needs.build.outputs.version }}
         run: |
-          chmod +x jwm jwm-session
+          chmod +x jotawm jotawm-session
           git log -1 --pretty=format:"## %s%n%n%b" > release-notes.md
           gh release create "$VERSION" \
             --title "jotawm $VERSION" \
             --notes-file release-notes.md \
             --prerelease \
-            jwm jwm-session
+            jotawm jotawm-session
 
   notify:
     needs: [build, release]
