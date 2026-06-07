@@ -528,16 +528,32 @@ int main(void) {
 
         /* ── Apps requesting geometry ────────────────────────────────── */
         case ConfigureRequest: {
+            Window w = ev.xconfigurerequest.window;
+            Node *n = NULL;
+            for (int s = 0; s < NSPACE; s++) {
+                if ((n = findleaf(trees[s], w))) break;
+            }
+
+            if (n) {
+                if (n->isfull || !n->isfloat) {
+                    ev.xconfigurerequest.value_mask &= ~(CWX | CWY | CWWidth | CWHeight);
+                } else {
+                    int is_curspace = (findleaf(trees[curspace], w) != NULL);
+                    if (!is_curspace) {
+                        ev.xconfigurerequest.value_mask &= ~(CWX | CWY);
+                    }
+                }
+            }
+
             XWindowChanges wc = {
-                .x = ev.xconfigurerequest.x,   .y = ev.xconfigurerequest.y,
+                .x = ev.xconfigurerequest.x, .y = ev.xconfigurerequest.y,
                 .width  = ev.xconfigurerequest.width,
                 .height = ev.xconfigurerequest.height,
                 .border_width = 0,
                 .sibling   = ev.xconfigurerequest.above,
                 .stack_mode = ev.xconfigurerequest.detail,
             };
-            XConfigureWindow(dpy, ev.xconfigurerequest.window,
-                ev.xconfigurerequest.value_mask, &wc);
+            XConfigureWindow(dpy, w, ev.xconfigurerequest.value_mask, &wc);
             break;
         }
 
