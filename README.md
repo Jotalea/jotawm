@@ -48,10 +48,10 @@ The default terminal is `kitty`, and the default menu is `dmenu_run`. Ensure the
 ## Running
 
 ### xinitrc
-Add the following line to your `~/.xinitrc` to start `jotawm` using `startx`:
+Add the following line to your `~/.xinitrc` to start `jotawm-session` using `startx`:
 
 ```sh
-exec jotawm
+exec jotawm-session
 ```
 
 ### Display Manager
@@ -59,11 +59,14 @@ exec jotawm
 `jotawm` installs a desktop file to `/usr/share/xsessions/jotawm.desktop`, so it should appear as an option in most display managers (Ly, GDM, LightDM, SDDM, etc.).
 
 ## Recommended software
-this is software that i personally recommend to use with jotawm
+this is software that i personally recommend to use alongside jotawm
 - [pulseaudio](http://anongit.freedesktop.org/git/pulseaudio/pulseaudio.git)
 - [brightnessctl](https://github.com/Hummer12007/brightnessctl.git)
 - [polybar](https://github.com/polybar/polybar)
 - [this picom fork](https://github.com/fdev31/picom)
+- [ly](https://github.com/fairyglade/ly)
+- [rofi](https://github.com/davatorium/rofi)
+- [kitty](https://github.com/kovidgoyal/kitty)
 
 ## License
 
