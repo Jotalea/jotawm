@@ -18,8 +18,16 @@ int main(void)
 
     if (fork() == 0) {
         setsid();
-        char *cmd[] = { "/bin/sh", "-c", "~/.jotalea/jotawm.sh", NULL };
-        execvp(cmd[0], cmd);
+        const char *home = getenv("HOME");
+        if (home) {
+            char script_path[4096];
+            snprintf(script_path, sizeof(script_path), "%s/.jotalea/jotawm.sh", home);
+            char *cmd[] = { "/bin/sh", script_path, NULL };
+            execvp(cmd[0], cmd);
+        } else {
+            char *cmd[] = { "/bin/sh", "-c", ".jotalea/jotawm.sh", NULL };
+            execvp(cmd[0], cmd);
+        }
         _exit(0);
     }
 
