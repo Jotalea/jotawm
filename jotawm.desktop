@@ -1,12 +1,12 @@
 [Desktop Entry]
 Comment[en_US]=minimalist tiling window manager
 Comment=minimalist tiling window manager
-Exec=jwm-session
+Exec=jotawm-session
 GenericName[en_US]=window manager
 GenericName=window manager
 MimeType=
-Name[en_US]=jwm
-Name=jwm
+Name[en_US]=jotawm
+Name=jotawm
 Path=
 StartupNotify=true
 Terminal=false

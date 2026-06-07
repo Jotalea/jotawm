@@ -18,12 +18,12 @@ int main(void)
 
     if (fork() == 0) {
         setsid();
-        char *cmd[] = { "/bin/sh", "-c", "~/.jotalea/jwm.sh", NULL };
+        char *cmd[] = { "/bin/sh", "-c", "~/.jotalea/jotawm.sh", NULL };
         execvp(cmd[0], cmd);
         _exit(0);
     }
 
-    char *argv[] = { "jwm", NULL };
-    execvp("jwm", argv);
+    char *argv[] = { "jotawm", NULL };
+    execvp("jotawm", argv);
     return 1;
 }

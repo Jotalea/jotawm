@@ -10,7 +10,7 @@
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
 
-#include "jwm.h"
+#include "jotawm.h"
 
 #define NELEM(a) (sizeof(a) / sizeof(*(a)))
 #define MINSIZE  50
