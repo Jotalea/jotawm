@@ -20,13 +20,13 @@ make
 sudo make install
 ```
 
-By default, the binary is installed to `/usr/bin/jwm`.
+By default, the binary is installed to `/usr/bin/jotawm`.
 
 ## Configuration
 
-Configuration is performed entirely at compile time by editing `jwm.h`.
+Configuration is performed entirely at compile time by editing `jotawm.h`.
 
-To modify the modifier key, default terminal, or keybindings, edit the `Configuration` block at the top of the source file. Recompile and restart `jwm` to apply changes.
+To modify the modifier key, default terminal, or keybindings, edit the `Configuration` block at the top of the source file. Recompile and restart `jotawm` to apply changes.
 
 The default modifier key (`Mod`) is set to `Mod4Mask` (Super/Windows key).
 
@@ -48,18 +48,18 @@ The default terminal is `kitty`, and the default menu is `dmenu_run`. Ensure the
 ## Running
 
 ### xinitrc
-Add the following line to your `~/.xinitrc` to start `jwm` using `startx`:
+Add the following line to your `~/.xinitrc` to start `jotawm` using `startx`:
 
 ```sh
-exec jwm
+exec jotawm
 ```
 
 ### Display Manager
 
-`jwm` installs a desktop file to `/usr/share/xsessions/jwm.desktop`, so it should appear as an option in most display managers (Ly, GDM, LightDM, SDDM, etc.).
+`jotawm` installs a desktop file to `/usr/share/xsessions/jotawm.desktop`, so it should appear as an option in most display managers (Ly, GDM, LightDM, SDDM, etc.).
 
 ## Recommended software
-this is software that i personally recommend to use with jwm
+this is software that i personally recommend to use with jotawm
 - [pulseaudio](http://anongit.freedesktop.org/git/pulseaudio/pulseaudio.git)
 - [brightnessctl](https://github.com/Hummer12007/brightnessctl.git)
 - [polybar](https://github.com/polybar/polybar)
