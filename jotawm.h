@@ -35,7 +35,7 @@ static const char *menucmd[] = { "rofi", "-show", "drun", NULL };
 static const char *scrscmd[] = { "/bin/sh", "-c",
     "maim ~/Pictures/$(date +%s).png", NULL };
 static const char *scrseln[] = { "/bin/sh", "-c",
-    "maim -s | xclip -selection clipboard -t image/png", NULL };
+    "maim --hidecursor --select | xclip -selection clipboard -t image/png", NULL };
 static const char *scrcpyd[] = { "/bin/sh", "-c",
     "maim | xclip -selection clipboard -t image/png", NULL };
 static const char *browcmd[] = { "firefox", NULL };
