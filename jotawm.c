@@ -511,6 +511,8 @@ int main(void) {
             XGrabButton(dpy, Button1, AnyModifier, w, False,
                 ButtonPressMask, GrabModeSync, GrabModeAsync, None, None);
 
+            XSetWindowBackground(dpy, w, BlackPixel(dpy, DefaultScreen(dpy)));
+            XClearWindow(dpy, w);
             attach(curspace, leaf);
             tile();
             XMapWindow(dpy, w);
