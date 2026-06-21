@@ -331,9 +331,8 @@ static void tile(void) {
 
     Node *f = focus[curspace];
     XSetInputFocus(dpy, f ? f->win : root, RevertToPointerRoot, CurrentTime);
-    if (f) {
+    if (f && f->isfloat)
         XRaiseWindow(dpy, f->win);
-    }
 
     XSync(dpy, False);
 }
@@ -346,8 +345,9 @@ static void setfocus(Node *n) {
     XUngrabKeyboard(dpy, CurrentTime);
     focus[curspace] = n;
     XSetInputFocus(dpy, n->win, RevertToPointerRoot, CurrentTime);
-    XRaiseWindow(dpy, n->win);
     raise_floats(trees[curspace]);
+    if (n->isfloat)
+        XRaiseWindow(dpy, n->win);
     XSync(dpy, False);
 }
 
@@ -559,7 +559,7 @@ int main(void) {
             break;
         }
 
-        /* ── Focus follows mouse ─────────────────────────────────────── */
+        /* ── Focus follows mouse (tiled only; floats use click-to-focus) ── */
         case EnterNotify:
             if (ev.xcrossing.mode != NotifyNormal ||
                 ev.xcrossing.detail == NotifyInferior) break;
@@ -574,8 +574,7 @@ int main(void) {
                 Node *n = findleaf(trees[curspace], ev.xcrossing.window);
                 if (n) {
                     if (n->isfull && barwin) XLowerWindow(dpy, barwin);
-                    
-                    if (n != focus[curspace]) {
+                    if (!n->isfloat && n != focus[curspace]) {
                         focus[curspace] = n;
                         setfocus(n);
                     }
@@ -612,9 +611,9 @@ int main(void) {
                     XAllowEvents(dpy, ReplayPointer, CurrentTime);
                 }
             } else {
-                /* Plain click-to-focus */
+                /* Plain click-to-focus; always raise floats on click */
                 Node *n = findleaf(trees[curspace], clicked);
-                if (n && n != focus[curspace]) {
+                if (n && (n != focus[curspace] || n->isfloat)) {
                     focus[curspace] = n;
                     setfocus(n);
                 }
