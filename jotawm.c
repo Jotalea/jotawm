@@ -640,15 +640,18 @@ int main(void) {
             int dx = ev.xmotion.x_root - drag_ox;
             int dy = ev.xmotion.y_root - drag_oy;
 
+            int top_limit = (BAR_POS == 0) ? BARH : 0;
+            int bot_limit = (BAR_POS == 0) ? disph : scrh;
+
             if (drag_mode == 1) {
                 /* Move */
                 int nx = drag_wx + dx;
                 int ny = drag_wy + dy;
                 if (nx < 0) nx = 0;
-                if (ny < 0) ny = 0;
+                if (ny < top_limit) ny = top_limit;
                 if (nx + drag_ww > scrw) nx = scrw - drag_ww;
-                if (ny + drag_wh > scrh) ny = scrh - drag_wh;
-                
+                if (ny + drag_wh > bot_limit) ny = bot_limit - drag_wh;
+
                 drag_node->fx = nx;
                 drag_node->fy = ny;
                 XMoveWindow(dpy, drag_node->win, nx, ny);
@@ -659,7 +662,7 @@ int main(void) {
                 if (nw < MINSIZE) nw = MINSIZE;
                 if (nh < MINSIZE) nh = MINSIZE;
                 if (drag_wx + nw > scrw) nw = scrw - drag_wx;
-                if (drag_wy + nh > scrh) nh = scrh - drag_wy;
+                if (drag_wy + nh > bot_limit) nh = bot_limit - drag_wy;
                 
                 drag_node->fw = nw;
                 drag_node->fh = nh;
