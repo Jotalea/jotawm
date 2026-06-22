@@ -70,4 +70,4 @@ this is software that i personally recommend to use alongside jotawm
 
 ## License
 
-MIT
+BSD-3 CLAUSE
