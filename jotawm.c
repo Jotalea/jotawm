@@ -420,7 +420,7 @@ int main(void) {
     root = DefaultRootWindow(dpy);
     Cursor cursor = XCreateFontCursor(dpy, XC_left_ptr);
     XDefineCursor(dpy, root, cursor);
-    XSetWindowBackground(dpy, root, BlackPixel(dpy, DefaultScreen(dpy)));
+    XSetWindowBackground(dpy, root, ROOT_BG);
     XClearWindow(dpy, root);
 
     Atom net_desks = XInternAtom(dpy, "_NET_NUMBER_OF_DESKTOPS", False);
@@ -511,7 +511,7 @@ int main(void) {
             XGrabButton(dpy, Button1, AnyModifier, w, False,
                 ButtonPressMask, GrabModeSync, GrabModeAsync, None, None);
 
-            XSetWindowBackground(dpy, w, BlackPixel(dpy, DefaultScreen(dpy)));
+            XSetWindowBackground(dpy, w, ROOT_BG);
             XClearWindow(dpy, w);
             attach(curspace, leaf);
             tile();
