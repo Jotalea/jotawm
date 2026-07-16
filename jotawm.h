@@ -2,8 +2,8 @@
 #define NCLIENT    64       /* kept for compatibility; BSP has no hard cap */
 #define BARH       24
 #define BAR_POS    0        /* 0 for top, 1 for bottom */
-#define GAP_OUTER  0 /*8*/  /* px gap between windows and screen edges */
-#define GAP_INNER  0 /*4*/  /* px gap between adjacent tiled windows (per side) */
+#define GAP_OUTER  8 /*8*/  /* px gap between windows and screen edges */
+#define GAP_INNER  4 /*4*/  /* px gap between adjacent tiled windows (per side) */
 #define ROOT_BG    0x1E1E2E /* root/window background color (RGB hex) */
 
 /* window rules */
