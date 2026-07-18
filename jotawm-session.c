@@ -12,6 +12,7 @@ int main(void)
         mkdir(path, 0755);
     }
     setenv("QT_QPA_PLATFORMTHEME",      "qt6ct", 1);
+    setenv("QT_STYLE_OVERRIDE",       "kvantum", 1);
     setenv("QT_AUTO_SCREEN_SCALE_FACTOR", "1",   1);
     setenv("GDK_BACKEND",               "x11",   1);
     setenv("GDK_CORE_DEVICE_EVENTS", "1", 1);
