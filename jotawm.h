@@ -19,6 +19,8 @@ typedef struct {
 static Rule rules[] = {
     /* class name       isfloat */
     { "pavucontrol",    1 },
+    { "rofi",           1 },
+    { "jotalnchr",      1 },
     { "steamwebhelper", 1 },
     { "steam",          1 },
     { "steam_app_",     1 },
