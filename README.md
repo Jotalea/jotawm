@@ -58,6 +58,7 @@ the default terminal is `kitty`, and the default menu is `rofi`. make sure these
 * **PrntScr** : take a fullscreen screenshot and save it to ~/Pictures/
 * **Mod + v** : toggle split direction (horizontal/vertical)
 * **Mod + w** : toggle floating state for the focused window
+* **Mod + m** : toggle macOS stage manager
 * **Mod + PgUp / PgDown** : switch to previous / next workspace
 * **XF86AudioRaiseVolume / LowerVolume** : increase / decrease volume (pactl)
 * **XF86MonBrightnessUp / Down** : increase / decrease brightness
