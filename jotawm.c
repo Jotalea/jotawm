@@ -58,6 +58,7 @@ static int prevspace = 0;
 static int disph;
 static Window barwin = 0, edgewin = 0;
 static Atom net_wm_state, net_wm_state_full;
+static int layout_modes[NSPACE] = {0}; /* 0 = BSP, 1 = macOS stage manager */
 
 /* One BSP tree + focused leaf per workspace */
 static Node *trees[NSPACE];
@@ -233,7 +234,10 @@ static void detach(int s, Node *n) {
     else if (p->par->a == p) p->par->a = sib;
     else                     p->par->b = sib;
 
-    if (focus[s] == n) focus[s] = firstleaf(sib);
+    /* if (focus[s] == n) focus[s] = firstleaf(sib); */
+    if (focus[s] == n) {
+        focus[s] = firstleaf(sib);
+    }
     free(p);
     n->par = NULL;
 }
@@ -313,6 +317,53 @@ static void tilenode(Node *n, int x, int y, int w, int h, int x_offset, int edge
     }
 }
 
+static void place_stage_leaf(Node *n, Node *foc, int *current_y, int master_x, int master_y, int master_w, int master_h, int stack_w, int stack_h, float f_scale, int x_offset) {
+    if (!n) return;
+    if (n->leaf) {
+        if (n == foc) {
+            if (n->isfull) {
+                XMoveResizeWindow(dpy, n->win, x_offset, 0, scrw, disph);
+            } else if (n->isfloat) {
+                XMoveResizeWindow(dpy, n->win, n->fx + x_offset, n->fy, n->fw, n->fh);
+            } else {
+                XMoveResizeWindow(dpy, n->win, master_x, master_y, master_w, master_h);
+            }
+        } else {
+            int sw, sh;
+            if (n->isfloat) {
+                sw = (int)(n->fw * f_scale);
+                sh = (int)(n->fh * f_scale);
+                if (sw < MINSIZE) sw = MINSIZE;
+                if (sh < MINSIZE) sh = MINSIZE;
+            } else {
+                sw = stack_w;
+                sh = stack_h;
+            }
+            XMoveResizeWindow(dpy, n->win, GAP_OUTER + x_offset, *current_y, sw, sh);
+            *current_y += sh + GAP_INNER;
+        }
+        return;
+    }
+
+    place_stage_leaf(n->a, foc, current_y, master_x, master_y, master_w, master_h, stack_w, stack_h, f_scale, x_offset);
+    place_stage_leaf(n->b, foc, current_y, master_x, master_y, master_w, master_h, stack_w, stack_h, f_scale, x_offset);
+}
+
+static int get_stack_height(Node *n, Node *foc, int stack_h, float f_scale) {
+    if (!n) return 0;
+    if (n->leaf) {
+        if (n == foc) return 0;
+        int sh = stack_h;
+        if (n->isfloat) {
+            sh = (int)(n->fh * f_scale);
+            if (sh < MINSIZE) sh = MINSIZE;
+        }
+        return sh + GAP_INNER;
+    }
+    return get_stack_height(n->a, foc, stack_h, f_scale) + 
+           get_stack_height(n->b, foc, stack_h, f_scale);
+}
+
 static void tile(void) {
     for (int s = 0; s < NSPACE; s++) {
         if (!trees[s]) continue;
@@ -322,7 +373,30 @@ static void tile(void) {
             x_offset = (s < curspace) ? -scrw : scrw;
         }
 
-        tilenode(trees[s], x_offset, BARH, scrw, scrh, x_offset, EDGE_ALL);
+        if (layout_modes[s] == 1) {
+            Node *foc = focus[s];
+            if (!foc) foc = firstleaf(trees[s]);
+
+            int stack_width  = (int)(scrw * STAGE_STACK_W_PCT);
+            int master_x     = stack_width + STAGE_GAP_MASTER + x_offset;
+            int master_y     = BARH + STAGE_MARGIN_Y;
+            int master_width = scrw - (stack_width + STAGE_GAP_MASTER) - STAGE_MARGIN_X;
+            int stage_height = scrh - (STAGE_MARGIN_Y * 2);
+            int base_stack_w = stack_width - GAP_OUTER - GAP_INNER;
+            int base_stack_h = (base_stack_w * 9) / 16;
+            float float_scale = 0.25f;
+
+            int total_stack_h = get_stack_height(trees[s], foc, base_stack_h, float_scale);
+            if (total_stack_h > 0) total_stack_h -= GAP_INNER; 
+            int current_y = BARH + (scrh - total_stack_h) / 2;
+            if (current_y < BARH + GAP_OUTER) {
+                current_y = BARH + GAP_OUTER;
+            }
+
+            place_stage_leaf(trees[s], foc, &current_y, master_x, master_y, master_width, stage_height, base_stack_w, base_stack_h, float_scale, x_offset);
+        } else {
+            tilenode(trees[s], x_offset, BARH, scrw, scrh, x_offset, EDGE_ALL);
+        }
 
         if (s == curspace) {
             raise_floats(trees[s]);
@@ -331,8 +405,7 @@ static void tile(void) {
 
     Node *f = focus[curspace];
     XSetInputFocus(dpy, f ? f->win : root, RevertToPointerRoot, CurrentTime);
-    if (f && f->isfloat)
-        XRaiseWindow(dpy, f->win);
+    if (f) XRaiseWindow(dpy, f->win);
 
     XSync(dpy, False);
 }
@@ -559,7 +632,7 @@ int main(void) {
             break;
         }
 
-        /* ── Focus follows mouse (tiled only; floats use click-to-focus) ── */
+        /* ── Focus follows mouse ── */
         case EnterNotify:
             if (ev.xcrossing.mode != NotifyNormal ||
                 ev.xcrossing.detail == NotifyInferior) break;
@@ -569,6 +642,9 @@ int main(void) {
                 if (barwin) XRaiseWindow(dpy, barwin);
                 break;
             }
+
+            /* Bypass hover-focus completely when Stage Manager is active */
+            if (layout_modes[curspace] == 1) break; 
 
             {
                 Node *n = findleaf(trees[curspace], ev.xcrossing.window);
@@ -594,6 +670,8 @@ int main(void) {
                     focus[curspace] = n;
                     setfocus(n);
 
+                    if (layout_modes[curspace] == 1) tile();
+
                     Window dw; unsigned gw, gh, gb, gd;
                     XGetGeometry(dpy, n->win, &dw,
                         &drag_wx, &drag_wy, &gw, &gh, &gb, &gd);
@@ -611,13 +689,20 @@ int main(void) {
                     XAllowEvents(dpy, ReplayPointer, CurrentTime);
                 }
             } else {
-                /* Plain click-to-focus; always raise floats on click */
                 Node *n = findleaf(trees[curspace], clicked);
-                if (n && (n != focus[curspace] || n->isfloat)) {
+                int was_master = (n == focus[curspace]);
+                
+                if (n && (!was_master || n->isfloat)) {
                     focus[curspace] = n;
                     setfocus(n);
+                    if (layout_modes[curspace] == 1) tile();
                 }
-                XAllowEvents(dpy, ReplayPointer, CurrentTime);
+
+                if (layout_modes[curspace] == 1 && n && !was_master) {
+                    XAllowEvents(dpy, AsyncPointer, CurrentTime);
+                } else {
+                    XAllowEvents(dpy, ReplayPointer, CurrentTime);
+                }
             }
             break;
         }
@@ -719,6 +804,7 @@ int main(void) {
                         if (n && n != foc) {
                             focus[curspace] = n;
                             setfocus(n);
+                            if (layout_modes[curspace] == 1) tile();
                         }
                     }
                     break;
@@ -825,12 +911,17 @@ int main(void) {
                 }
 
                 case SPLITDIR:
-                    /* Toggle the split direction of the focused node's parent */
                     if (foc && foc->par) {
                         foc->par->horiz ^= 1;
                         tile();
                     }
                     break;
+
+                case TOGGLE_STAGE:
+                    layout_modes[curspace] ^= 1;
+                    tile();
+                    break;
+
                 }
             }
             break;

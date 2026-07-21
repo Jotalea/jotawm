@@ -1,10 +1,14 @@
 #define NSPACE     9
-#define NCLIENT    64       /* kept for compatibility; BSP has no hard cap */
+#define NCLIENT    64             /* kept for compatibility; BSP has no hard cap */
 #define BARH       24
-#define BAR_POS    0        /* 0 for top, 1 for bottom */
-#define GAP_OUTER  8 /*8*/  /* px gap between windows and screen edges */
-#define GAP_INNER  4 /*4*/  /* px gap between adjacent tiled windows (per side) */
-#define ROOT_BG    0x1E1E2E /* root/window background color (RGB hex) */
+#define BAR_POS    0              /* 0 for top, 1 for bottom */
+#define GAP_OUTER  8 /*8*/        /* px gap between windows and screen edges */
+#define GAP_INNER  4 /*4*/        /* px gap between adjacent tiled windows (per side) */
+#define ROOT_BG    0x1E1E2E       /* root/window background color (RGB hex) */
+#define STAGE_MARGIN_Y     64     /* vertical padding (top and bottom) for the master window */
+#define STAGE_MARGIN_X     64     /* right-side padding for the master window */
+#define STAGE_GAP_MASTER   32     /* horizontal gap between the left stack and the master window */
+#define STAGE_STACK_W_PCT  0.15f  /* stack width as a percentage of total screen width */
 
 /* window rules */
 typedef struct {
@@ -20,7 +24,7 @@ static Rule rules[] = {
     { "steam_app_",     1 },
 };
 
-enum { EXEC, VIEW, CYCLE, SWAP, SEND, RESIZE, FULLSCR, CLOSE, QUIT, FLOAT, SPLITDIR, VIEW_ADJ };
+enum { EXEC, VIEW, CYCLE, SWAP, SEND, RESIZE, FULLSCR, CLOSE, QUIT, FLOAT, SPLITDIR, VIEW_ADJ, TOGGLE_STAGE };
 
 typedef union  { int i; float f; const char **v; } Arg;
 typedef struct { unsigned int mod; KeySym sym; int act; Arg arg; } Key;
@@ -85,6 +89,9 @@ static Key keys[] = {
         /* wm control */
         { MODKEY,           XK_q,      CLOSE,    {0}             },
         { MODKEY|SHTKEY,    XK_q,      QUIT,     {0}             },
+
+        /* macOS stage manager */
+        { MODKEY,           XK_m,      TOGGLE_STAGE, {0}         },
 
         /* media / brightness */
         VL(XF86XK_AudioRaiseVolume,  "+5%"),
