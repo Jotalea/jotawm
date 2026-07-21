@@ -61,3 +61,8 @@ jwm
 jwm-session
 jotawm
 jotawm-session
+
+# Arch Linux packaging
+/src/
+/pkg/
+*.pkg.tar.zst
