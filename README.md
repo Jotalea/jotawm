@@ -15,6 +15,13 @@ A minimal tiling window manager for X11.
 
 ## installation
 
+### arch linux
+```sh
+makepkg -si
+```
+
+### other linux
+
 ```sh
 make
 sudo make install
