@@ -26,7 +26,7 @@ static Rule rules[] = {
     { "steam_app_",     1 },
 };
 
-enum { EXEC, VIEW, CYCLE, SWAP, SEND, RESIZE, FULLSCR, CLOSE, QUIT, FLOAT, SPLITDIR, VIEW_ADJ, TOGGLE_STAGE };
+enum { EXEC, VIEW, CYCLE, SWAP, SEND, RESIZE, FULLSCR, CLOSE, QUIT, FLOAT, SPLITDIR, VIEW_ADJ, TOGGLE_STAGE, FIXTREE };
 
 typedef union  { int i; float f; const char **v; } Arg;
 typedef struct { unsigned int mod; KeySym sym; int act; Arg arg; } Key;
@@ -91,6 +91,9 @@ static Key keys[] = {
         /* wm control */
         { MODKEY,           XK_q,      CLOSE,    {0}             },
         { MODKEY|SHTKEY,    XK_q,      QUIT,     {0}             },
+
+        /* repair: drop any dead/stuck "fake window" leaves and retile */
+        { MODKEY|SHTKEY,    XK_r,      FIXTREE,  {0}             },
 
         /* macOS stage manager */
         { MODKEY,           XK_m,      TOGGLE_STAGE, {0}         },

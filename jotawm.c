@@ -58,6 +58,7 @@ static int prevspace = 0;
 static int disph;
 static Window barwin = 0, edgewin = 0;
 static Atom net_wm_state, net_wm_state_full;
+static Atom net_wm_window_type, net_wm_window_type_dialog;
 static int layout_modes[NSPACE] = {0}; /* 0 = BSP, 1 = macOS stage manager */
 
 /* One BSP tree + focused leaf per workspace */
@@ -453,6 +454,41 @@ static void closewin(Window w) {
     XSendEvent(dpy, w, False, NoEventMask, &ev);
 }
 
+/* ── Repair: drop leaves whose window is dead or silently unmapped ───────
+ * Safety net for the "fake window" case: a leaf survives in the tree but
+ * its X window is gone (missed a DestroyNotify) or exists yet isn't
+ * actually mapped (missed an UnmapNotify). Bound to a keybind so it can
+ * always be run by hand, on top of fixing the root cause in the event
+ * handlers below. Collects window IDs first, then removes stale ones, so
+ * we never mutate the tree while still walking it. ── */
+
+static int collect_wins(Node *n, Window *out, int cap, int count) {
+    if (!n || count >= cap) return count;
+    if (n->leaf) {
+        out[count++] = n->win;
+        return count;
+    }
+    count = collect_wins(n->a, out, cap, count);
+    count = collect_wins(n->b, out, cap, count);
+    return count;
+}
+
+static void fixtree(void) {
+    Window buf[1024];
+    int n = 0;
+    for (int s = 0; s < NSPACE; s++)
+        n = collect_wins(trees[s], buf, (int)NELEM(buf), n);
+
+    int removed = 0;
+    for (int i = 0; i < n; i++) {
+        XWindowAttributes wa;
+        int gone = !XGetWindowAttributes(dpy, buf[i], &wa);
+        if ((gone || wa.map_state != IsViewable) && rmwin(buf[i]))
+            removed++;
+    }
+    if (removed) tile();
+}
+
 /* ── Extended Window Manager Hints ──────────────────────────────────────── */
 
 static void update_ewmh_desktop(void) {
@@ -507,6 +543,8 @@ int main(void) {
 
     net_wm_state = XInternAtom(dpy, "_NET_WM_STATE", False);
     net_wm_state_full = XInternAtom(dpy, "_NET_WM_STATE_FULLSCREEN", False);
+    net_wm_window_type = XInternAtom(dpy, "_NET_WM_WINDOW_TYPE", False);
+    net_wm_window_type_dialog = XInternAtom(dpy, "_NET_WM_WINDOW_TYPE_DIALOG", False);
 
     edgewin = XCreateWindow(dpy, root, 0, (BAR_POS == 0) ? 0 : disph - 1, scrw, 1, 0, 0, InputOnly, CopyFromParent, 0, NULL);
     XSelectInput(dpy, edgewin, EnterWindowMask);
@@ -549,13 +587,24 @@ int main(void) {
             Window w = ev.xmaprequest.window;
             if (!XGetWindowAttributes(dpy, w, &wa) || wa.override_redirect) break;
 
+            /* Already tracked in some tree? A stray second MapRequest for a
+               window we still manage would otherwise insert a duplicate
+               leaf -- the classic "empty slot in the BSP tree" symptom.
+               Just show it again instead. */
+            int already = 0;
+            for (int s = 0; s < NSPACE && !already; s++)
+                already = (findleaf(trees[s], w) != NULL);
+            if (already) { XMapWindow(dpy, w); break; }
+
             int is_float = 0;
+            int rule_matched = 0;
             XClassHint ch;
             if (XGetClassHint(dpy, w, &ch)) {
                 for (size_t i = 0; i < NELEM(rules); i++) {
                     if ((ch.res_class && strstr(ch.res_class, rules[i].class)) ||
                         (ch.res_name && strstr(ch.res_name, rules[i].class))) {
                         is_float = rules[i].isfloat;
+                        rule_matched = 1;
                         break;
                     }
                 }
@@ -563,11 +612,46 @@ int main(void) {
                 if (ch.res_name) XFree(ch.res_name);
             }
 
+            /* Dialogs float like they do on every other WM: WM_TRANSIENT_FOR
+               pointing at an owner window (ICCCM), or _NET_WM_WINDOW_TYPE
+               containing _NET_WM_WINDOW_TYPE_DIALOG (EWMH). GTK/Qt set one
+               or both on "Open File", preferences, alert boxes, etc. An
+               explicit rules[] entry above always wins over this. */
+            int is_dialog = 0;
+            if (!rule_matched) {
+                Window trans = None;
+                if (XGetTransientForHint(dpy, w, &trans) && trans != None)
+                    is_dialog = 1;
+
+                if (!is_dialog) {
+                    Atom type; int fmt; unsigned long nitems, rest;
+                    unsigned char *prop = NULL;
+                    if (XGetWindowProperty(dpy, w, net_wm_window_type, 0, 16, False,
+                            XA_ATOM, &type, &fmt, &nitems, &rest, &prop) == Success && prop) {
+                        Atom *types = (Atom *)prop;
+                        for (unsigned long i = 0; i < nitems; i++) {
+                            if (types[i] == net_wm_window_type_dialog) { is_dialog = 1; break; }
+                        }
+                        XFree(prop);
+                    }
+                }
+                if (is_dialog) is_float = 1;
+            }
+
             Node *leaf = mkleaf(w);
             leaf->isfloat = is_float;
 
             if (is_float) {
-                leaf->fw = scrw / 2; leaf->fh = scrh / 2;
+                if (is_dialog) {
+                    /* Honor the dialog's own requested size instead of the
+                       generic 50% used for rules[]-based floats. */
+                    int dw = wa.width, dh = wa.height;
+                    if (dw < MINSIZE || dw > scrw) dw = scrw / 2;
+                    if (dh < MINSIZE || dh > scrh) dh = scrh / 2;
+                    leaf->fw = dw; leaf->fh = dh;
+                } else {
+                    leaf->fw = scrw / 2; leaf->fh = scrh / 2;
+                }
                 leaf->fx = (scrw - leaf->fw) / 2; leaf->fy = BARH + (scrh - leaf->fh) / 2;
             }
 
@@ -598,7 +682,17 @@ int main(void) {
             if (rmwin(ev.xdestroywindow.window)) tile();
             break;
         case UnmapNotify:
-            if (ev.xunmap.send_event && rmwin(ev.xunmap.window)) tile();
+            /* A real (non-synthetic) UnmapNotify means the window actually
+               left the screen -- the client hid it or is about to destroy
+               it. Plenty of GTK dialogs/popups do this without ever
+               sending DestroyNotify, which used to leave an empty leaf
+               sitting in the tree forever (the "fake window" bug). A
+               *synthetic* UnmapNotify (send_event=1) is just the ICCCM
+               WithdrawnState courtesy message clients send after they've
+               already unmapped for real, so it's safely ignored here --
+               jotawm never leaves a managed leaf mapped-but-hidden on its
+               own, so there's nothing left to do for it by that point. */
+            if (!ev.xunmap.send_event && rmwin(ev.xunmap.window)) tile();
             break;
 
         /* ── Apps requesting geometry ────────────────────────────────── */
@@ -920,6 +1014,10 @@ int main(void) {
                 case TOGGLE_STAGE:
                     layout_modes[curspace] ^= 1;
                     tile();
+                    break;
+
+                case FIXTREE:
+                    fixtree();
                     break;
 
                 }
