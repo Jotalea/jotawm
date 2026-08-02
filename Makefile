@@ -1,11 +1,13 @@
-PREFIX  = /usr
-X11INC  = /usr/include
-X11LIB  = /usr/lib
+PREFIX      ?= /usr/local
+CC          ?= cc
 
-CFLAGS  = -O2 -Wall -Wextra -I$(X11INC)
-LDFLAGS = -L$(X11LIB) -lX11 -lXinerama
+X11CFLAGS   := $(shell pkg-config --cflags x11 xinerama 2>/dev/null)
+X11LIBS     := $(shell pkg-config --libs x11 xinerama 2>/dev/null)
+X11CFLAGS   ?= -I/usr/include
+X11LIBS     ?= -L/usr/lib -lX11 -lXinerama
 
-CC      = cc
+CFLAGS      += -O2 -Wall -Wextra $(X11CFLAGS)
+LDFLAGS     += $(X11LIBS)
 
 all: jotawm jotawm-session
 
@@ -13,16 +15,16 @@ jotawm: jotawm.c jotawm.h
 	$(CC) $(CFLAGS) -o $@ jotawm.c $(LDFLAGS)
 
 jotawm-session: jotawm-session.c
-	$(CC) $(CFLAGS) -o $@ jotawm-session.c
+	$(CC) $(CFLAGS) -o $@ jotawm-session.c $(LDFLAGS)
 
 clean:
 	rm -f jotawm jotawm-session
 
 install: all
-	mkdir -p $(DESTDIR)$(PREFIX)/bin
+	install -d $(DESTDIR)$(PREFIX)/bin
 	install -m 755 jotawm $(DESTDIR)$(PREFIX)/bin/jotawm
 	install -m 755 jotawm-session $(DESTDIR)$(PREFIX)/bin/jotawm-session
-	mkdir -p $(DESTDIR)$(PREFIX)/share/xsessions
+	install -d $(DESTDIR)$(PREFIX)/share/xsessions
 	install -m 644 jotawm.desktop $(DESTDIR)$(PREFIX)/share/xsessions/jotawm.desktop
 
 uninstall:
