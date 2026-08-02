@@ -74,6 +74,24 @@ jobs:
             --prerelease \
             jotawm jotawm-session
 
+  aur:
+    needs: [build, release]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Publish to AUR
+        uses: KSXGitHub/github-actions-deploy-aur@v4.2.0
+        with:
+          pkgname: jotawm-git
+          pkgbuild: ./PKGBUILD
+          ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+          commit_username: "Jotalea (actions)"
+          commit_email: "main@jotalea.com.ar"
+
   notify:
     needs: [build, release]
     runs-on: ubuntu-latest
