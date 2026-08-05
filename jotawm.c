@@ -42,6 +42,7 @@ struct Node {
 static void tilenode(Node *n, int x, int y, int w, int h, int x_offset, int edges);
 static void tile(void);
 static void setfocus(Node *n);
+static void update_ewmh_active(Window w);
 static void detach(int s, Node *n);
 static void attach(int s, Node *leaf);
 static Node *findleaf(Node *n, Window w);
@@ -59,6 +60,7 @@ static int disph;
 static Window barwin = 0, edgewin = 0;
 static Atom net_wm_state, net_wm_state_full;
 static Atom net_wm_window_type, net_wm_window_type_dialog;
+static Atom net_active_window;
 static int layout_modes[NSPACE] = {0}; /* 0 = BSP, 1 = macOS stage manager */
 
 /* One BSP tree + focused leaf per workspace */
@@ -407,6 +409,7 @@ static void tile(void) {
     Node *f = focus[curspace];
     XSetInputFocus(dpy, f ? f->win : root, RevertToPointerRoot, CurrentTime);
     if (f) XRaiseWindow(dpy, f->win);
+    update_ewmh_active(f ? f->win : None);
 
     XSync(dpy, False);
 }
@@ -419,6 +422,7 @@ static void setfocus(Node *n) {
     XUngrabKeyboard(dpy, CurrentTime);
     focus[curspace] = n;
     XSetInputFocus(dpy, n->win, RevertToPointerRoot, CurrentTime);
+    update_ewmh_active(n->win);
     raise_floats(trees[curspace]);
     if (n->isfloat)
         XRaiseWindow(dpy, n->win);
@@ -497,6 +501,11 @@ static void update_ewmh_desktop(void) {
     XChangeProperty(dpy, root, net_curr, XA_CARDINAL, 32, PropModeReplace, (unsigned char *)&data, 1);
 }
 
+static void update_ewmh_active(Window w) {
+    XChangeProperty(dpy, root, net_active_window, XA_WINDOW, 32,
+        PropModeReplace, (unsigned char *)&w, 1);
+}
+
 /* ── Grab keys ──────────────────────────────────────────────────────────── */
 
 static void grab_keys(void) {
@@ -532,11 +541,6 @@ int main(void) {
     XSetWindowBackground(dpy, root, ROOT_BG);
     XClearWindow(dpy, root);
 
-    Atom net_desks = XInternAtom(dpy, "_NET_NUMBER_OF_DESKTOPS", False);
-    unsigned long ndesks = NSPACE;
-    XChangeProperty(dpy, root, net_desks, XA_CARDINAL, 32, PropModeReplace, (unsigned char *)&ndesks, 1);
-    update_ewmh_desktop();
-
     disph = DisplayHeight(dpy, 0);
     scrw = DisplayWidth(dpy, 0);
     scrh = disph - BARH;
@@ -545,6 +549,23 @@ int main(void) {
     net_wm_state_full = XInternAtom(dpy, "_NET_WM_STATE_FULLSCREEN", False);
     net_wm_window_type = XInternAtom(dpy, "_NET_WM_WINDOW_TYPE", False);
     net_wm_window_type_dialog = XInternAtom(dpy, "_NET_WM_WINDOW_TYPE_DIALOG", False);
+    net_active_window = XInternAtom(dpy, "_NET_ACTIVE_WINDOW", False);
+
+    Atom net_supported = XInternAtom(dpy, "_NET_SUPPORTED", False);
+    Atom net_desks      = XInternAtom(dpy, "_NET_NUMBER_OF_DESKTOPS", False);
+    Atom net_curr       = XInternAtom(dpy, "_NET_CURRENT_DESKTOP", False);
+    Atom supported[] = {
+        net_supported, net_desks, net_curr, net_active_window,
+        net_wm_state, net_wm_state_full,
+        net_wm_window_type, net_wm_window_type_dialog,
+    };
+    XChangeProperty(dpy, root, net_supported, XA_ATOM, 32, PropModeReplace,
+        (unsigned char *)supported, NELEM(supported));
+
+    unsigned long ndesks = NSPACE;
+    XChangeProperty(dpy, root, net_desks, XA_CARDINAL, 32, PropModeReplace, (unsigned char *)&ndesks, 1);
+    update_ewmh_desktop();
+    update_ewmh_active(None);
 
     edgewin = XCreateWindow(dpy, root, 0, (BAR_POS == 0) ? 0 : disph - 1, scrw, 1, 0, 0, InputOnly, CopyFromParent, 0, NULL);
     XSelectInput(dpy, edgewin, EnterWindowMask);
