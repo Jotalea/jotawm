@@ -26,7 +26,7 @@ static Rule rules[] = {
     { "steam_app_",     1 },
 };
 
-enum { EXEC, VIEW, CYCLE, SWAP, SEND, RESIZE, FULLSCR, CLOSE, QUIT, FLOAT, SPLITDIR, VIEW_ADJ, TOGGLE_STAGE, FIXTREE };
+enum { EXEC, VIEW, CYCLE, SWAP, SEND, RESIZE, FULLSCR, CLOSE, QUIT, FLOAT, SPLITDIR, VIEW_ADJ, TOGGLE_STAGE, FIXTREE, TOGGLE_CANVAS, CENTER_CANVAS, CANVAS_HOME };
 
 typedef union  { int i; float f; const char **v; } Arg;
 typedef struct { unsigned int mod; KeySym sym; int act; Arg arg; } Key;
@@ -97,6 +97,11 @@ static Key keys[] = {
 
         /* macOS stage manager */
         { MODKEY,           XK_m,      TOGGLE_STAGE, {0}         },
+
+        /* infinite 2D canvas */
+        { MODKEY,           XK_g,      TOGGLE_CANVAS, {0}         },
+        { MODKEY,           XK_c,      CENTER_CANVAS, {0}         },
+        { MODKEY,           XK_Home,   CANVAS_HOME,   {0}         },
 
         /* media / brightness */
         VL(XF86XK_AudioRaiseVolume,  "+5%"),

@@ -14,6 +14,7 @@
 
 #define NELEM(a) (sizeof(a) / sizeof(*(a)))
 #define MINSIZE  50
+#define CTLKEY   ControlMask
 
 /* ── BSP node ───────────────────────────────────────────────────────────── */
 
@@ -29,6 +30,7 @@ struct Node {
     Window win;         /* X window (leaf only)                     */
     int x, y, w, h;     /* cached geometry                          */
     int fx, fy, fw, fh; /* floating geometry                        */
+    int cx, cy, cw, ch; /* canvas-space geometry                    */
 };
 
 /* ── Forward declarations ───────────────────────────────────────────────── */
@@ -49,6 +51,9 @@ static Node *findleaf(Node *n, Window w);
 static Node *firstleaf(Node *n);
 static Node *nextleaf(Node *cur, int s);
 static Node *prevleaf(Node *cur, int s);
+static void canvas_seed_workspace(int s);
+static void canvas_place_tree(Node *n, int s, int x_offset);
+static void update_canvas_grabs(void);
 
 /* ── Global state ───────────────────────────────────────────────────────── */
 
@@ -61,7 +66,10 @@ static Window barwin = 0, edgewin = 0;
 static Atom net_wm_state, net_wm_state_full;
 static Atom net_wm_window_type, net_wm_window_type_dialog;
 static Atom net_active_window;
-static int layout_modes[NSPACE] = {0}; /* 0 = BSP, 1 = macOS stage manager */
+static int layout_modes[NSPACE] = {0}; /* 0 = BSP, 1 = stage manager, 2 = 2D canvas */
+static int canvas_prev_modes[NSPACE] = {0};
+static int canvas_vx[NSPACE] = {0};
+static int canvas_vy[NSPACE] = {0};
 
 /* One BSP tree + focused leaf per workspace */
 static Node *trees[NSPACE];
@@ -73,6 +81,11 @@ static int   drag_mode;                     /* 1=move, 2=resize */
 static int   drag_ox, drag_oy;             /* pointer origin    */
 static int   drag_wx, drag_wy;             /* window origin     */
 static int   drag_ww, drag_wh;             /* window size       */
+
+/* Canvas panning: a core-X11 pointer drag, suitable for a mouse or trackpad. */
+static int pan_ox, pan_oy;
+static int pan_vx, pan_vy;
+static int pan_active;
 
 /* ── Error handler ──────────────────────────────────────────────────────── */
 
@@ -367,6 +380,119 @@ static int get_stack_height(Node *n, Node *foc, int stack_h, float f_scale) {
            get_stack_height(n->b, foc, stack_h, f_scale);
 }
 
+static void canvas_seed_leaf(Node *n, int s) {
+    if (!n) return;
+    if (!n->leaf) {
+        canvas_seed_leaf(n->a, s);
+        canvas_seed_leaf(n->b, s);
+        return;
+    }
+
+    /* Do not overwrite a window's established canvas position when the user
+       temporarily returns to BSP or stage mode and later comes back. */
+    if (n->cw <= 0 || n->ch <= 0) {
+        XWindowAttributes wa;
+        if (XGetWindowAttributes(dpy, n->win, &wa)) {
+            n->cx = wa.x + canvas_vx[s];
+            n->cy = wa.y - BARH + canvas_vy[s];
+            n->cw = wa.width > 0 ? wa.width : scrw / 2;
+            n->ch = wa.height > 0 ? wa.height : scrh / 2;
+        } else {
+            n->cw = scrw / 2;
+            n->ch = scrh / 2;
+            n->cx = canvas_vx[s] + (scrw - n->cw) / 2;
+            n->cy = canvas_vy[s] + (scrh - n->ch) / 2;
+        }
+    }
+
+    /* Fullscreen is a viewport operation in the old layouts, not a canvas
+       geometry. Leaving it set would make the state lie to clients. */
+    n->isfull = 0;
+    XChangeProperty(dpy, n->win, net_wm_state, XA_ATOM, 32,
+        PropModeReplace, (unsigned char *)0, 0);
+}
+
+static void canvas_seed_workspace(int s) {
+    canvas_seed_leaf(trees[s], s);
+}
+
+static void canvas_sync_float_leaf(Node *n, int s) {
+    if (!n) return;
+    if (!n->leaf) {
+        canvas_sync_float_leaf(n->a, s);
+        canvas_sync_float_leaf(n->b, s);
+        return;
+    }
+    if (n->isfloat) {
+        n->fx = n->cx - canvas_vx[s];
+        n->fy = BARH + n->cy - canvas_vy[s];
+        n->fw = n->cw;
+        n->fh = n->ch;
+    }
+}
+
+static void canvas_place_tree(Node *n, int s, int x_offset) {
+    if (!n) return;
+    if (!n->leaf) {
+        canvas_place_tree(n->a, s, x_offset);
+        canvas_place_tree(n->b, s, x_offset);
+        return;
+    }
+
+    int x = n->cx - canvas_vx[s] + x_offset;
+    int y = BARH + n->cy - canvas_vy[s];
+    n->x = x;
+    n->y = y;
+    n->w = n->cw > 0 ? n->cw : scrw / 2;
+    n->h = n->ch > 0 ? n->ch : scrh / 2;
+    XMoveResizeWindow(dpy, n->win, x, y, n->w, n->h);
+}
+
+static void update_canvas_grabs_leaf(Node *n, int enable) {
+    if (!n) return;
+    if (!n->leaf) {
+        update_canvas_grabs_leaf(n->a, enable);
+        update_canvas_grabs_leaf(n->b, enable);
+        return;
+    }
+
+    unsigned int mods[] = {
+        MODKEY | CTLKEY,
+        MODKEY | CTLKEY | LockMask,
+        MODKEY | CTLKEY | Mod2Mask,
+        MODKEY | CTLKEY | LockMask | Mod2Mask,
+    };
+    for (size_t i = 0; i < NELEM(mods); i++) {
+        if (enable) {
+            XGrabButton(dpy, Button1, mods[i], n->win, False,
+                ButtonPressMask | ButtonReleaseMask | PointerMotionMask,
+                GrabModeAsync, GrabModeAsync, None, None);
+        } else {
+            XUngrabButton(dpy, Button1, mods[i], n->win);
+        }
+    }
+}
+
+static void update_canvas_grabs(void) {
+    int enable = layout_modes[curspace] == 2;
+    for (int s = 0; s < NSPACE; s++)
+        update_canvas_grabs_leaf(trees[s], enable);
+}
+
+static void canvas_center_focus(void) {
+    Node *n = focus[curspace];
+    if (!n || !n->leaf) return;
+    canvas_vx[curspace] = n->cx - (scrw - n->cw) / 2;
+    canvas_vy[curspace] = n->cy - (scrh - n->ch) / 2;
+    tile();
+}
+
+static void canvas_home(void) {
+    canvas_vx[curspace] = 0;
+    canvas_vy[curspace] = 0;
+    tile();
+}
+
 static void tile(void) {
     for (int s = 0; s < NSPACE; s++) {
         if (!trees[s]) continue;
@@ -376,7 +502,9 @@ static void tile(void) {
             x_offset = (s < curspace) ? -scrw : scrw;
         }
 
-        if (layout_modes[s] == 1) {
+        if (layout_modes[s] == 2) {
+            canvas_place_tree(trees[s], s, x_offset);
+        } else if (layout_modes[s] == 1) {
             Node *foc = focus[s];
             if (!foc) foc = firstleaf(trees[s]);
 
@@ -676,6 +804,15 @@ int main(void) {
                 leaf->fx = (scrw - leaf->fw) / 2; leaf->fy = BARH + (scrh - leaf->fh) / 2;
             }
 
+            if (layout_modes[curspace] == 2) {
+                leaf->cw = is_float && leaf->fw > 0 ? leaf->fw : (wa.width > 0 ? wa.width : scrw / 2);
+                leaf->ch = is_float && leaf->fh > 0 ? leaf->fh : (wa.height > 0 ? wa.height : scrh / 2);
+                if (leaf->cw < MINSIZE) leaf->cw = MINSIZE;
+                if (leaf->ch < MINSIZE) leaf->ch = MINSIZE;
+                leaf->cx = canvas_vx[curspace] + (scrw - leaf->cw) / 2;
+                leaf->cy = canvas_vy[curspace] + (scrh - leaf->ch) / 2;
+            }
+
             XSelectInput(dpy, w, EnterWindowMask | StructureNotifyMask);
 
             /* Grab mod+buttons on the window itself for float interaction */
@@ -692,6 +829,7 @@ int main(void) {
             XSetWindowBackground(dpy, w, ROOT_BG);
             XClearWindow(dpy, w);
             attach(curspace, leaf);
+            update_canvas_grabs();
             tile();
             XMapWindow(dpy, w);
             setfocus(leaf);
@@ -720,11 +858,23 @@ int main(void) {
         case ConfigureRequest: {
             Window w = ev.xconfigurerequest.window;
             Node *n = NULL;
+            int owner = -1;
             for (int s = 0; s < NSPACE; s++) {
-                if ((n = findleaf(trees[s], w))) break;
+                if ((n = findleaf(trees[s], w))) {
+                    owner = s;
+                    break;
+                }
             }
 
-            if (n) {
+            if (n && owner >= 0 && layout_modes[owner] == 2) {
+                ev.xconfigurerequest.value_mask &= ~(CWX | CWY);
+                if (ev.xconfigurerequest.value_mask & CWWidth)
+                    n->cw = ev.xconfigurerequest.width;
+                if (ev.xconfigurerequest.value_mask & CWHeight)
+                    n->ch = ev.xconfigurerequest.height;
+                if (n->cw < MINSIZE) n->cw = MINSIZE;
+                if (n->ch < MINSIZE) n->ch = MINSIZE;
+            } else if (n) {
                 if (n->isfull || !n->isfloat) {
                     ev.xconfigurerequest.value_mask &= ~(CWX | CWY | CWWidth | CWHeight);
                 } else {
@@ -778,20 +928,56 @@ int main(void) {
             Window clicked = ev.xbutton.subwindow
                 ? ev.xbutton.subwindow : ev.xbutton.window;
 
-            /* Check if modifier is held (float drag) */
-            if (ev.xbutton.state & MODKEY) {
+            /* Canvas navigation is deliberately core-X11: a left drag on
+               the root pans the camera, and Mod+Ctrl+LMB does the same over
+               a client window. */
+            if (layout_modes[curspace] == 2 && ev.xbutton.button == Button1 &&
+                (ev.xbutton.state & (MODKEY | CTLKEY)) == (MODKEY | CTLKEY)) {
                 Node *n = findleaf(trees[curspace], clicked);
-                if (n && n->isfloat) {
+                if (n) {
+                    focus[curspace] = n;
+                    setfocus(n);
+                }
+                pan_ox = ev.xbutton.x_root;
+                pan_oy = ev.xbutton.y_root;
+                pan_vx = canvas_vx[curspace];
+                pan_vy = canvas_vy[curspace];
+                pan_active = 1;
+                XGrabPointer(dpy, root, False,
+                    PointerMotionMask | ButtonReleaseMask,
+                    GrabModeAsync, GrabModeAsync, None, None, CurrentTime);
+            } else if (layout_modes[curspace] == 2 && clicked == root &&
+                       ev.xbutton.button == Button1 &&
+                       !(ev.xbutton.state & (MODKEY | CTLKEY))) {
+                pan_ox = ev.xbutton.x_root;
+                pan_oy = ev.xbutton.y_root;
+                pan_vx = canvas_vx[curspace];
+                pan_vy = canvas_vy[curspace];
+                pan_active = 1;
+                XGrabPointer(dpy, root, False,
+                    PointerMotionMask | ButtonReleaseMask,
+                    GrabModeAsync, GrabModeAsync, None, None, CurrentTime);
+            /* Check if modifier is held (float drag or canvas window drag) */
+            } else if (ev.xbutton.state & MODKEY) {
+                Node *n = findleaf(trees[curspace], clicked);
+                if (n && (n->isfloat || layout_modes[curspace] == 2)) {
                     focus[curspace] = n;
                     setfocus(n);
 
                     if (layout_modes[curspace] == 1) tile();
 
                     Window dw; unsigned gw, gh, gb, gd;
-                    XGetGeometry(dpy, n->win, &dw,
-                        &drag_wx, &drag_wy, &gw, &gh, &gb, &gd);
-                    drag_ww  = (int)gw;
-                    drag_wh  = (int)gh;
+                    if (layout_modes[curspace] == 2) {
+                        drag_wx = n->cx;
+                        drag_wy = n->cy;
+                        drag_ww = n->cw;
+                        drag_wh = n->ch;
+                    } else {
+                        XGetGeometry(dpy, n->win, &dw,
+                            &drag_wx, &drag_wy, &gw, &gh, &gb, &gd);
+                        drag_ww  = (int)gw;
+                        drag_wh  = (int)gh;
+                    }
                     drag_ox  = ev.xbutton.x_root;
                     drag_oy  = ev.xbutton.y_root;
                     drag_node = n;
@@ -824,6 +1010,10 @@ int main(void) {
 
         /* ── End drag ────────────────────────────────────────────────── */
         case ButtonRelease:
+            if (pan_active) {
+                XUngrabPointer(dpy, CurrentTime);
+                pan_active = 0;
+            }
             if (drag_mode) {
                 XUngrabPointer(dpy, CurrentTime);
                 drag_mode = 0;
@@ -833,6 +1023,14 @@ int main(void) {
 
         /* ── Float move / resize ─────────────────────────────────────── */
         case MotionNotify: {
+            if (pan_active) {
+                XEvent tmp;
+                while (XCheckTypedEvent(dpy, MotionNotify, &tmp)) ev = tmp;
+                canvas_vx[curspace] = pan_vx - (ev.xmotion.x_root - pan_ox);
+                canvas_vy[curspace] = pan_vy - (ev.xmotion.y_root - pan_oy);
+                tile();
+                break;
+            }
             if (!drag_mode || !drag_node) break;
             /* Coalesce motion events */
             XEvent tmp;
@@ -840,6 +1038,23 @@ int main(void) {
 
             int dx = ev.xmotion.x_root - drag_ox;
             int dy = ev.xmotion.y_root - drag_oy;
+
+            if (layout_modes[curspace] == 2) {
+                if (drag_mode == 1) {
+                    drag_node->cx = drag_wx + dx;
+                    drag_node->cy = drag_wy + dy;
+                } else {
+                    drag_node->cw = drag_ww + dx;
+                    drag_node->ch = drag_wh + dy;
+                    if (drag_node->cw < MINSIZE) drag_node->cw = MINSIZE;
+                    if (drag_node->ch < MINSIZE) drag_node->ch = MINSIZE;
+                }
+                XMoveResizeWindow(dpy, drag_node->win,
+                    drag_node->cx - canvas_vx[curspace],
+                    BARH + drag_node->cy - canvas_vy[curspace],
+                    drag_node->cw, drag_node->ch);
+                break;
+            }
 
             int top_limit = (BAR_POS == 0) ? BARH : 0;
             int bot_limit = (BAR_POS == 0) ? disph : scrh;
@@ -906,6 +1121,7 @@ int main(void) {
                         prevspace = curspace;
                         curspace = a.i;
                         update_ewmh_desktop();
+                        update_canvas_grabs();
                         tile();
                         if (focus[curspace]) setfocus(focus[curspace]);
                     }
@@ -934,6 +1150,7 @@ int main(void) {
                     break;
 
                 case FULLSCR:
+                    if (layout_modes[curspace] == 2) break;
                     if (foc) {
                         foc->isfull ^= 1;
                         if (foc->isfull) {
@@ -1005,6 +1222,11 @@ int main(void) {
                         detach(curspace, foc);
                         foc->isfloat = 0;
                         foc->isfull  = 0;
+                        if (layout_modes[a.i] == 2) {
+                            canvas_seed_leaf(foc, a.i);
+                            foc->cx = canvas_vx[a.i] + (scrw - foc->cw) / 2;
+                            foc->cy = canvas_vy[a.i] + (scrh - foc->ch) / 2;
+                        }
                         attach(a.i, foc);
                         tile();
                         /* focus something in the current workspace */
@@ -1019,6 +1241,7 @@ int main(void) {
                         prevspace = curspace;
                         curspace = next;
                         update_ewmh_desktop();
+                        update_canvas_grabs();
                         tile();
                         if (focus[curspace]) setfocus(focus[curspace]);
                     }
@@ -1033,8 +1256,35 @@ int main(void) {
                     break;
 
                 case TOGGLE_STAGE:
-                    layout_modes[curspace] ^= 1;
-                    tile();
+                    if (layout_modes[curspace] != 2) {
+                        layout_modes[curspace] ^= 1;
+                        tile();
+                    }
+                    break;
+
+                case TOGGLE_CANVAS:
+                    if (layout_modes[curspace] == 2) {
+                        canvas_sync_float_leaf(trees[curspace], curspace);
+                        layout_modes[curspace] = canvas_prev_modes[curspace];
+                        update_canvas_grabs();
+                        tile();
+                    } else {
+                        canvas_prev_modes[curspace] = layout_modes[curspace];
+                        canvas_seed_workspace(curspace);
+                        XUnmapWindow(dpy, edgewin);
+                        if (barwin) XRaiseWindow(dpy, barwin);
+                        layout_modes[curspace] = 2;
+                        update_canvas_grabs();
+                        tile();
+                    }
+                    break;
+
+                case CENTER_CANVAS:
+                    if (layout_modes[curspace] == 2) canvas_center_focus();
+                    break;
+
+                case CANVAS_HOME:
+                    if (layout_modes[curspace] == 2) canvas_home();
                     break;
 
                 case FIXTREE:
