@@ -84,6 +84,11 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Update PKGBUILD pkgver
+        run: |
+          PKGVER="$(date +%Y.%m.%d).r$(git rev-list --count HEAD).$(git rev-parse --short HEAD)"
+          sed -i "s/^pkgver=.*/pkgver=${PKGVER}/" PKGBUILD
+
       - name: Publish to AUR
         uses: KSXGitHub/github-actions-deploy-aur@v4.2.0
         with:
