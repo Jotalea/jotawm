@@ -59,6 +59,10 @@ the default terminal is `kitty`, and the default menu is `rofi`. make sure these
 * **Mod + v** : toggle split direction (horizontal/vertical)
 * **Mod + w** : toggle floating state for the focused window
 * **Mod + m** : toggle macOS stage manager
+* **Mod + g** : toggle canvas mode for the current workspace
+* **Mod + Ctrl + left click drag** : move around the canvas
+* **Mod + LMB drag** : move window around the canvas
+* **Mod + RMB drag** : resize window in floating and canvas mode
 * **Mod + PgUp / PgDown** : switch to previous / next workspace
 * **XF86AudioRaiseVolume / LowerVolume** : increase / decrease volume (pactl)
 * **XF86MonBrightnessUp / Down** : increase / decrease brightness
@@ -75,6 +79,24 @@ exec jotawm-session
 ### display managers
 
 `jotawm` installs a desktop file to `/usr/share/xsessions/jotawm.desktop`, so it should appear as an option in most display managers (Ly, GDM, LightDM, SDDM, etc.).
+
+## modes
+
+### tiling mode
+
+this is the standard for jotawm, the windows appear tiled one alongside the other. they appear in a binary tree structure, following the position of the mouse cursor, making a quite satisfactory effect.
+
+### floating mode
+
+toggled on individual windows with **Mod + w**, it makes the selected window appear as a floating, draggable and resizable window.
+
+### stage manager
+
+this mode is similar to a master-stack layout, where a main focused window will appear in the center and the other windows will appear stacked at the left. click on an unfocused window to switch it from stack to master.
+
+### canvas mode
+
+in this mode, windows are floating in a scrollable 2d canvas.
 
 ## recommended software
 this is software that i personally recommend to use alongside jotawm
