@@ -539,6 +539,10 @@ static void tile(void) {
     if (f) XRaiseWindow(dpy, f->win);
     update_ewmh_active(f ? f->win : None);
 
+    if (f && f->isfull && barwin) {
+        XRaiseWindow(dpy, edgewin);
+    }
+
     if (layout_modes[curspace] == 2) {
         if (!barwin) find_bar();
         if (barwin) XRaiseWindow(dpy, barwin);
@@ -1158,15 +1162,20 @@ int main(void) {
                     if (layout_modes[curspace] == 2) break;
                     if (foc) {
                         foc->isfull ^= 1;
+                        if (!barwin) find_bar();
+                        
                         if (foc->isfull) {
                             XChangeProperty(dpy, foc->win, net_wm_state, XA_ATOM, 32, PropModeReplace, (unsigned char*)&net_wm_state_full, 1);
-                            XMapRaised(dpy, edgewin);
-                            if (!barwin) find_bar();
-                            if (barwin) XLowerWindow(dpy, barwin);
+                            if (barwin) {
+                                XMapRaised(dpy, edgewin);
+                                XLowerWindow(dpy, barwin);
+                            }
                         } else {
                             XChangeProperty(dpy, foc->win, net_wm_state, XA_ATOM, 32, PropModeReplace, (unsigned char*)0, 0);
-                            XUnmapWindow(dpy, edgewin);
-                            if (barwin) XRaiseWindow(dpy, barwin);
+                            if (barwin) {
+                                XUnmapWindow(dpy, edgewin);
+                                XRaiseWindow(dpy, barwin);
+                            }
                         }
                         tile();
                     }
