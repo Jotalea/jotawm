@@ -993,7 +993,7 @@ int main(void) {
                 Node *n = findleaf(trees[curspace], clicked);
                 int was_master = (n == focus[curspace]);
                 
-                if (n && (!was_master || n->isfloat)) {
+                if (n && !was_master) {
                     focus[curspace] = n;
                     setfocus(n);
                     if (layout_modes[curspace] == 1) tile();
