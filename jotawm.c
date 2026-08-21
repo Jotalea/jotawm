@@ -539,6 +539,11 @@ static void tile(void) {
     if (f) XRaiseWindow(dpy, f->win);
     update_ewmh_active(f ? f->win : None);
 
+    if (layout_modes[curspace] == 2) {
+        if (!barwin) find_bar();
+        if (barwin) XRaiseWindow(dpy, barwin);
+    }
+
     XSync(dpy, False);
 }
 
