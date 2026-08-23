@@ -3,8 +3,14 @@
 #include <unistd.h>
 #include <sys/stat.h>
 
-int main(void)
-{
+int main(void) {
+    printf("welcome to\n");
+    printf("   ███\n");
+    printf("    █  █ ███ █  █   █████\n");
+    printf("    █ █ █ █ █ █ █ █ █ █ █\n");
+    printf(" █  █ █ █ █ ███ █ █ █ █ █\n");
+    printf("  ██   █  █ █ █ █████   █\n\n");
+
     const char *home = getenv("HOME");
     if (home) {
         char path[4096];
