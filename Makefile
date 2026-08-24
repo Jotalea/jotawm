@@ -18,7 +18,7 @@ jotawm-session: jotawm-session.c
 	$(CC) $(CFLAGS) -o $@ jotawm-session.c $(LDFLAGS)
 
 clean:
-	rm -rf jotawm/
+	rm -rf jotawm
 	rm -f jotawm-session
 	rm -rf pkg/ src/
 	rm -f jotawm-git-*.pkg.tar.zst
