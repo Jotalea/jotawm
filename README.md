@@ -17,7 +17,7 @@ A minimal tiling window manager for X11.
 
 ### arch linux
 ```sh
-makepkg -si
+makepkg -sic
 ```
 
 ### other linux
@@ -25,6 +25,7 @@ makepkg -si
 ```sh
 make
 sudo make install
+make clean
 ```
 
 by default, the binary is installed to `/usr/bin/jotawm`.

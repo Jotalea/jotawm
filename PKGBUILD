@@ -12,6 +12,7 @@ provides=('jotawm' 'jotawm-session')
 conflicts=('jotawm')
 source=("git+file://${startdir}")
 sha256sums=('SKIP')
+options=(!debug)
 
 pkgver() {
   cd "$srcdir/jotawm" 2>/dev/null || cd "$srcdir"
