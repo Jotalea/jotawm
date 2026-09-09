@@ -74,8 +74,36 @@ jobs:
           name: jotawm-deb
           path: debian-build/
 
+  pkg:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Build Arch package
+        run: |
+          docker run --rm -v "$PWD":/build/jotawm -w /build/jotawm archlinux:base-devel bash -c '
+            set -e
+            pacman -Sy --noconfirm --needed git libx11 libxinerama
+            useradd -m builder
+            chown -R builder:builder /build
+            su builder -c "makepkg -s --noconfirm --nocheck"
+          '
+
+      - name: Collect artifact
+        run: |
+          mkdir -p pkg-build
+          cp jotawm-git-*.pkg.tar.zst pkg-build/
+
+      - name: Upload package
+        uses: actions/upload-artifact@v4
+        with:
+          name: jotawm-pkg
+          path: pkg-build/
+
   release:
-    needs: build
+    needs: [build, deb, pkg]
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     steps:
@@ -88,6 +116,16 @@ jobs:
         with:
           name: binaries
 
+      - name: Download .deb
+        uses: actions/download-artifact@v4
+        with:
+          name: jotawm-deb
+
+      - name: Download Arch package
+        uses: actions/download-artifact@v4
+        with:
+          name: jotawm-pkg
+
       - name: Create release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -99,7 +137,7 @@ jobs:
             --title "jotawm $VERSION" \
             --notes-file release-notes.md \
             --prerelease \
-            jotawm jotawm-session
+            jotawm jotawm-session *.deb *.pkg.tar.zst
 
   aur:
     needs: [build, release]
