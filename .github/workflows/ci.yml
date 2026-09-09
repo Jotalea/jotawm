@@ -47,6 +47,33 @@ jobs:
             jotawm
             jotawm-session
 
+  deb:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install build dependencies
+        run: sudo apt-get update && sudo apt-get install -y dpkg-dev debhelper pkg-config libx11-dev libxinerama-dev
+
+      - name: Generate debian/changelog
+        run: debian/gen-changelog.sh
+
+      - name: Build .deb
+        run: dpkg-buildpackage -us -uc -b
+
+      - name: Collect artifacts
+        run: |
+          mkdir -p debian-build
+          cp ../jotawm_*.deb ../jotawm_*.changes ../jotawm_*.buildinfo debian-build/
+
+      - name: Upload .deb
+        uses: actions/upload-artifact@v4
+        with:
+          name: jotawm-deb
+          path: debian-build/
+
   release:
     needs: build
     runs-on: ubuntu-latest
