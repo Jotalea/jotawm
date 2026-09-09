@@ -83,18 +83,19 @@ jobs:
 
       - name: Build Arch package
         run: |
-          docker run --rm -v "$PWD":/build/jotawm -w /build/jotawm archlinux:base-devel bash -c '
-            set -e
-            pacman -Sy --noconfirm --needed git libx11 libxinerama
-            useradd -m builder
-            chown -R builder:builder /build
-            su builder -c "makepkg -s --noconfirm --nocheck"
-          '
-
-      - name: Collect artifact
-        run: |
           mkdir -p pkg-build
-          cp jotawm-git-*.pkg.tar.zst pkg-build/
+          docker run --rm \
+            -v "$PWD":/src:ro \
+            -v "$PWD/pkg-build":/out \
+            archlinux:base-devel bash -c '
+              set -e
+              pacman -Sy --noconfirm --needed git libx11 libxinerama
+              useradd -m builder
+              cp -a /src /home/builder/jotawm
+              chown -R builder:builder /home/builder/jotawm
+              su builder -c "cd /home/builder/jotawm && makepkg -s --noconfirm --nocheck"
+              cp /home/builder/jotawm/jotawm-git-*.pkg.tar.zst /out/
+            '
 
       - name: Upload package
         uses: actions/upload-artifact@v4
