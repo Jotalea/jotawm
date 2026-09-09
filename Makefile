@@ -22,6 +22,9 @@ clean:
 	rm -f jotawm-session
 	rm -rf pkg/ src/
 	rm -f jotawm-git-*.pkg.tar.zst
+	rm -rf debian-build/
+	rm -rf debian/.debhelper/ debian/jotawm/
+	rm -f debian/*.substvars debian/*.debhelper.log debian/files
 
 install: all
 	install -d $(DESTDIR)$(PREFIX)/bin
