@@ -2,7 +2,7 @@
 # Build the jotawm .deb inside a throwaway Debian container.
 #
 # Usage:
-#   ./scripts/debian-build.sh [--lint] [--image debian:stable] [--shell]
+#   ./debian/debian-build.sh [--lint] [--image debian:stable] [--shell]
 #
 #   --lint    also install and run lintian against the built package
 #   --image   Debian image to build in (default: debian:stable)
@@ -11,7 +11,8 @@
 #
 # Output (.deb, .changes, .buildinfo, .dsc) is written to ./debian-build/
 # in the repo root. The repo itself is mounted read-only; nothing is
-# written back into it.
+# written back into it. debian/changelog is regenerated from git metadata
+# inside the container before the build (see debian/gen-changelog.sh).
 
 set -euo pipefail
 
@@ -44,7 +45,7 @@ fi
 
 mkdir -p "$OUT_DIR"
 
-BUILD_DEPS="build-essential devscripts debhelper pkg-config libx11-dev libxinerama-dev"
+BUILD_DEPS="build-essential dpkg-dev debhelper git pkg-config libx11-dev libxinerama-dev"
 LINT_DEPS=""
 LINT_CMD=""
 if [[ "$RUN_LINT" -eq 1 ]]; then
@@ -60,6 +61,8 @@ apt-get install -y --no-install-recommends $BUILD_DEPS $LINT_DEPS
 
 cp -a /src /tmp/jotawm
 cd /tmp/jotawm
+git config --global --add safe.directory /tmp/jotawm
+debian/gen-changelog.sh
 dpkg-buildpackage -us -uc -b
 
 cp -v /tmp/jotawm_*.deb /tmp/jotawm_*.changes /tmp/jotawm_*.buildinfo /out/ 2>/dev/null || true
