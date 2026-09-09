@@ -80,3 +80,4 @@ jotawm-session
 *.buildinfo
 *.changes
 *.dsc
+/debian-build/
