@@ -1,0 +1,5 @@
+jotawm (2026.8.24.003-1) unstable; urgency=medium
+
+  * Initial Debian packaging.
+
+ -- Jotalea <main@jotalea.com.ar>  Wed, 09 Sep 2026 19:11:58 -0300

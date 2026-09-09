@@ -66,3 +66,17 @@ jotawm-session
 /src/
 /pkg/
 *.pkg.tar.zst
+
+# Debian packaging
+/debian/.debhelper/
+/debian/jotawm/
+/debian/*.substvars
+/debian/*.debhelper.log
+/debian/files
+/obj-*/
+*.deb
+*.ddeb
+*.build
+*.buildinfo
+*.changes
+*.dsc

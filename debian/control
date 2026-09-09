@@ -1,0 +1,24 @@
+Source: jotawm
+Section: x11
+Priority: optional
+Maintainer: Jotalea <main@jotalea.com.ar>
+Build-Depends: debhelper-compat (= 13),
+               pkg-config,
+               libx11-dev,
+               libxinerama-dev
+Standards-Version: 4.6.2
+Homepage: https://github.com/jotalea/jotawm
+Rules-Requires-Root: no
+
+Package: jotawm
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Provides: x-window-manager
+Description: minimal tiling window manager for X11
+ jotawm is a minimal tiling window manager for X11, arranging
+ windows in a binary-tree tiling layout with floating, stage
+ manager, and 2D canvas modes, plus workspace support.
+ .
+ This package also installs jotawm-session, a session launcher
+ for use from ~/.xinitrc or a display manager, along with an
+ X11 session desktop entry.
