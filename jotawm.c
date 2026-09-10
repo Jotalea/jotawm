@@ -237,6 +237,22 @@ static Node *prevleaf(Node *cur, int m, int s) {
     return lastleaf(trees[m][s]);    /* wrap */
 }
 
+/* Track the closest leaf (and its owning monitor) to a point, across
+   however many calls/trees the caller walks it over. */
+static void nearest_leaf_in(Node *n, int m, int px, int py,
+                             int *best_m, Node **best, long *bestd) {
+    if (!n) return;
+    if (n->leaf) {
+        long dx = px - (n->x + n->w / 2);
+        long dy = py - (n->y + n->h / 2);
+        long d = dx * dx + dy * dy;
+        if (!*best || d < *bestd) { *bestd = d; *best = n; *best_m = m; }
+        return;
+    }
+    nearest_leaf_in(n->a, m, px, py, best_m, best, bestd);
+    nearest_leaf_in(n->b, m, px, py, best_m, best, bestd);
+}
+
 /* Raise all floating leaves above tiled ones */
 static void raise_floats(Node *n) {
     if (!n) return;
@@ -657,6 +673,35 @@ static void setfocus(int m, Node *n) {
     XSync(dpy, False);
 }
 
+/* Resolve focus after a workspace switch: whatever is directly under the
+   cursor (on whichever monitor that is), else the nearest leaf to the
+   cursor on curspace across every monitor, else nothing at all. The
+   cursor itself never moves -- only which window owns the keyboard does. */
+static void focus_switch_target(void) {
+    Window rr, cr;
+    int rx = 0, ry = 0, wx, wy;
+    unsigned int mask;
+    if (!XQueryPointer(dpy, root, &rr, &cr, &rx, &ry, &wx, &wy, &mask))
+        return;
+
+    curmon = monitor_at(rx, ry);
+
+    Node *hit = trees[curmon][curspace]
+        ? findleaf_at(trees[curmon][curspace], rx, ry) : NULL;
+    if (hit) {
+        setfocus(curmon, hit);
+        return;
+    }
+
+    int best_m = -1;
+    Node *best = NULL;
+    long bestd = 0;
+    for (int m = 0; m < nmon; m++)
+        nearest_leaf_in(trees[m][curspace], m, rx, ry, &best_m, &best, &bestd);
+
+    if (best) setfocus(best_m, best);
+}
+
 /* ── Remove window from whichever workspace owns it ─────────────────────── */
 
 static int rmwin(Window w) {
@@ -849,7 +894,14 @@ int main(void) {
                     already = (findleaf(trees[m][s], w) != NULL);
             if (already) { XMapWindow(dpy, w); break; }
 
-            /* New windows attach to the currently active monitor */
+            /* New windows attach to whichever monitor the pointer is over */
+            {
+                Window rr, cr;
+                int rx, ry, wx, wy;
+                unsigned int mask;
+                if (XQueryPointer(dpy, root, &rr, &cr, &rx, &ry, &wx, &wy, &mask))
+                    curmon = monitor_at(rx, ry);
+            }
             use_monitor(curmon);
 
             int is_float = 0;
@@ -1254,7 +1306,7 @@ int main(void) {
                         update_ewmh_desktop();
                         update_canvas_grabs();
                         tile();
-                        if (focus[curmon][curspace]) setfocus(curmon, focus[curmon][curspace]);
+                        focus_switch_target();
                     }
                     break;
 
@@ -1381,7 +1433,7 @@ int main(void) {
                         update_ewmh_desktop();
                         update_canvas_grabs();
                         tile();
-                        if (focus[curmon][curspace]) setfocus(curmon, focus[curmon][curspace]);
+                        focus_switch_target();
                     }
                     break;
                 }
