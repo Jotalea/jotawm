@@ -63,7 +63,7 @@ static Window   root;
 static int scrw, scrh, curspace, running = 1;
 static int prevspace = 0;
 static int disph;
-static Window barwin = 0, edgewin = 0;
+static Window barwin[MAXMONITOR] = {0}, edgewin[MAXMONITOR] = {0};
 
 /* ── Monitors ───────────────────────────────────────────────────────────── */
 
@@ -380,9 +380,14 @@ static void find_bar(void) {
     if (XQueryTree(dpy, root, &root_ret, &parent_ret, &children, &nchildren)) {
         for (unsigned int i = 0; i < nchildren; i++) {
             XWindowAttributes wa;
-            if (XGetWindowAttributes(dpy, children[i], &wa) && wa.override_redirect && wa.height == BARH) {
-                if ((BAR_POS == 0 && wa.y == 0) || (BAR_POS == 1 && wa.y == disph - BARH)) {
-                    barwin = children[i];
+            if (!XGetWindowAttributes(dpy, children[i], &wa) ||
+                !wa.override_redirect || wa.height != BARH)
+                continue;
+            for (int m = 0; m < nmon; m++) {
+                if (!monitor_has_bar(m) || barwin[m]) continue;
+                int expect_y = (BAR_POS == 0) ? monitors[m].y : monitors[m].y + monitors[m].h - BARH;
+                if (wa.x == monitors[m].x && wa.y == expect_y) {
+                    barwin[m] = children[i];
                     break;
                 }
             }
@@ -661,13 +666,15 @@ static void tile(void) {
     if (f) XRaiseWindow(dpy, f->win);
     update_ewmh_active(f ? f->win : None);
 
-    if (f && f->isfull && barwin) {
-        XRaiseWindow(dpy, edgewin);
+    if (f && f->isfull && barwin[curmon]) {
+        XRaiseWindow(dpy, edgewin[curmon]);
     }
 
-    if (layout_modes[curmon][curspace] == 2) {
-        if (!barwin) find_bar();
-        if (barwin) XRaiseWindow(dpy, barwin);
+    for (int m = 0; m < nmon; m++) {
+        if (layout_modes[m][curspace] == 2) {
+            if (!barwin[m]) find_bar();
+            if (barwin[m]) XRaiseWindow(dpy, barwin[m]);
+        }
     }
 
     XSync(dpy, False);
@@ -859,8 +866,13 @@ int main(void) {
     update_ewmh_desktop();
     update_ewmh_active(None);
 
-    edgewin = XCreateWindow(dpy, root, 0, (BAR_POS == 0) ? 0 : disph - 1, scrw, 1, 0, 0, InputOnly, CopyFromParent, 0, NULL);
-    XSelectInput(dpy, edgewin, EnterWindowMask);
+    for (int m = 0; m < nmon; m++) {
+        if (!monitor_has_bar(m)) continue;
+        edgewin[m] = XCreateWindow(dpy, root, monitors[m].x,
+            (BAR_POS == 0) ? monitors[m].y : monitors[m].y + monitors[m].h - 1,
+            monitors[m].w, 1, 0, 0, InputOnly, CopyFromParent, 0, NULL);
+        XSelectInput(dpy, edgewin[m], EnterWindowMask);
+    }
 
     XSelectInput(dpy, root,
         SubstructureRedirectMask | SubstructureNotifyMask |
@@ -1082,10 +1094,16 @@ int main(void) {
             if (ev.xcrossing.mode != NotifyNormal ||
                 ev.xcrossing.detail == NotifyInferior) break;
 
-            if (ev.xcrossing.window == edgewin) {
-                if (!barwin) find_bar();
-                if (barwin) XRaiseWindow(dpy, barwin);
-                break;
+            {
+                int edge_m = -1;
+                for (int mi = 0; mi < nmon; mi++) {
+                    if (ev.xcrossing.window == edgewin[mi]) { edge_m = mi; break; }
+                }
+                if (edge_m >= 0) {
+                    if (!barwin[edge_m]) find_bar();
+                    if (barwin[edge_m]) XRaiseWindow(dpy, barwin[edge_m]);
+                    break;
+                }
             }
 
             {
@@ -1101,7 +1119,7 @@ int main(void) {
                     /* Bypass hover-focus when Stage Manager is active on
                        that monitor's workspace */
                     if (layout_modes[m][curspace] == 1) break;
-                    if (n->isfull && barwin) XLowerWindow(dpy, barwin);
+                    if (n->isfull && barwin[m]) XLowerWindow(dpy, barwin[m]);
                     if (!n->isfloat && n != focus[m][curspace]) {
                         setfocus(m, n);
                     } else {
@@ -1374,19 +1392,19 @@ int main(void) {
                     if (layout_modes[curmon][curspace] == 2) break;
                     if (foc) {
                         foc->isfull ^= 1;
-                        if (!barwin) find_bar();
-                        
+                        if (!barwin[curmon]) find_bar();
+
                         if (foc->isfull) {
                             XChangeProperty(dpy, foc->win, net_wm_state, XA_ATOM, 32, PropModeReplace, (unsigned char*)&net_wm_state_full, 1);
-                            if (barwin) {
-                                XMapRaised(dpy, edgewin);
-                                XLowerWindow(dpy, barwin);
+                            if (barwin[curmon]) {
+                                XMapRaised(dpy, edgewin[curmon]);
+                                XLowerWindow(dpy, barwin[curmon]);
                             }
                         } else {
                             XChangeProperty(dpy, foc->win, net_wm_state, XA_ATOM, 32, PropModeReplace, (unsigned char*)0, 0);
-                            if (barwin) {
-                                XUnmapWindow(dpy, edgewin);
-                                XRaiseWindow(dpy, barwin);
+                            if (barwin[curmon]) {
+                                XUnmapWindow(dpy, edgewin[curmon]);
+                                XRaiseWindow(dpy, barwin[curmon]);
                             }
                         }
                         tile();
@@ -1500,8 +1518,8 @@ int main(void) {
                     } else {
                         canvas_prev_modes[curmon][curspace] = layout_modes[curmon][curspace];
                         canvas_seed_workspace(curmon, curspace);
-                        XUnmapWindow(dpy, edgewin);
-                        if (barwin) XRaiseWindow(dpy, barwin);
+                        if (edgewin[curmon]) XUnmapWindow(dpy, edgewin[curmon]);
+                        if (barwin[curmon]) XRaiseWindow(dpy, barwin[curmon]);
                         layout_modes[curmon][curspace] = 2;
                         update_canvas_grabs();
                         tile();
