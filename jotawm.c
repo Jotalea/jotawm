@@ -44,16 +44,16 @@ struct Node {
 
 static void tilenode(Node *n, int x, int y, int w, int h, int x_offset, int edges);
 static void tile(void);
-static void setfocus(Node *n);
+static void setfocus(int m, Node *n);
 static void update_ewmh_active(Window w);
-static void detach(int s, Node *n);
-static void attach(int s, Node *leaf);
+static void detach(int m, int s, Node *n);
+static void attach(int m, int s, Node *leaf);
 static Node *findleaf(Node *n, Window w);
 static Node *firstleaf(Node *n);
-static Node *nextleaf(Node *cur, int s);
-static Node *prevleaf(Node *cur, int s);
-static void canvas_seed_workspace(int s);
-static void canvas_place_tree(Node *n, int s, int x_offset);
+static Node *nextleaf(Node *cur, int m, int s);
+static Node *prevleaf(Node *cur, int m, int s);
+static void canvas_seed_workspace(int m, int s);
+static void canvas_place_tree(Node *n, int m, int s, int x_offset);
 static void update_canvas_grabs(void);
 
 /* ── Global state ───────────────────────────────────────────────────────── */
@@ -81,14 +81,16 @@ static int scrx, scry, topgap;
 static Atom net_wm_state, net_wm_state_full;
 static Atom net_wm_window_type, net_wm_window_type_dialog;
 static Atom net_active_window;
-static int layout_modes[NSPACE] = {0}; /* 0 = BSP, 1 = stage manager, 2 = 2D canvas */
-static int canvas_prev_modes[NSPACE] = {0};
-static int canvas_vx[NSPACE] = {0};
-static int canvas_vy[NSPACE] = {0};
+static int layout_modes[MAXMONITOR][NSPACE] = {{0}}; /* 0 = BSP, 1 = stage manager, 2 = 2D canvas */
+static int canvas_prev_modes[MAXMONITOR][NSPACE] = {{0}};
+static int canvas_vx[MAXMONITOR][NSPACE] = {{0}};
+static int canvas_vy[MAXMONITOR][NSPACE] = {{0}};
 
-/* One BSP tree + focused leaf per workspace */
-static Node *trees[NSPACE];
-static Node *focus[NSPACE];
+/* One BSP tree + focused leaf per monitor, per workspace. curspace is a
+   single global index shown on every monitor at once; curmon picks which
+   monitor's slice keyboard/spawn actions currently target. */
+static Node *trees[MAXMONITOR][NSPACE];
+static Node *focus[MAXMONITOR][NSPACE];
 
 /* Drag state (mod + LMB = move, mod + RMB = resize) */
 static Node *drag_node;
@@ -149,6 +151,18 @@ static void detect_monitors(void) {
     if (curmon >= nmon) curmon = 0;
 }
 
+/* Which monitor contains the point (px, py)? Falls back to curmon if the
+   point lies outside every known monitor rect (shouldn't normally happen
+   for a live pointer position, but geometry can be stale mid-drag). */
+static int monitor_at(int px, int py) {
+    for (int m = 0; m < nmon; m++) {
+        if (px >= monitors[m].x && px < monitors[m].x + monitors[m].w &&
+            py >= monitors[m].y && py < monitors[m].y + monitors[m].h)
+            return m;
+    }
+    return curmon;
+}
+
 /* ── Error handler ──────────────────────────────────────────────────────── */
 
 static int xerror(Display *d, XErrorEvent *e) {
@@ -196,8 +210,8 @@ static Node *lastleaf(Node *n) {
 }
 
 /* In-order next leaf (wraps around) */
-static Node *nextleaf(Node *cur, int s) {
-    if (!cur || !trees[s]) return firstleaf(trees[s]);
+static Node *nextleaf(Node *cur, int m, int s) {
+    if (!cur || !trees[m][s]) return firstleaf(trees[m][s]);
     Node *n = cur;
     while (n->par) {
         if (n->par->a == n) {
@@ -206,12 +220,12 @@ static Node *nextleaf(Node *cur, int s) {
         }
         n = n->par;
     }
-    return firstleaf(trees[s]);   /* wrap */
+    return firstleaf(trees[m][s]);   /* wrap */
 }
 
 /* In-order prev leaf (wraps around) */
-static Node *prevleaf(Node *cur, int s) {
-    if (!cur || !trees[s]) return lastleaf(trees[s]);
+static Node *prevleaf(Node *cur, int m, int s) {
+    if (!cur || !trees[m][s]) return lastleaf(trees[m][s]);
     Node *n = cur;
     while (n->par) {
         if (n->par->b == n) {
@@ -220,7 +234,7 @@ static Node *prevleaf(Node *cur, int s) {
         }
         n = n->par;
     }
-    return lastleaf(trees[s]);    /* wrap */
+    return lastleaf(trees[m][s]);    /* wrap */
 }
 
 /* Raise all floating leaves above tiled ones */
@@ -233,13 +247,14 @@ static void raise_floats(Node *n) {
 
 /* ── Attach / detach ────────────────────────────────────────────────────── */
 
-static void attach(int s, Node *leaf) {
+static void attach(int m, int s, Node *leaf) {
     leaf->par = NULL;
-    
+    use_monitor(m);
+
     /* If the workspace is empty, just insert and focus */
-    if (!trees[s]) {
-        trees[s] = leaf;
-        focus[s] = leaf;
+    if (!trees[m][s]) {
+        trees[m][s] = leaf;
+        focus[m][s] = leaf;
         return;
     }
 
@@ -253,12 +268,12 @@ static void attach(int s, Node *leaf) {
     
     if (pointer_valid) {
         /* 2. Traverse the BSP tree to find the node under the cursor */
-        t = findleaf_at(trees[s], root_x, root_y);
+        t = findleaf_at(trees[m][s], root_x, root_y);
     }
 
     /* 3. Fallback: if pointer is out of bounds or not found, default to focused/first leaf */
     if (!t) {
-        t = (focus[s] && focus[s]->leaf) ? focus[s] : firstleaf(trees[s]);
+        t = (focus[m][s] && focus[m][s]->leaf) ? focus[m][s] : firstleaf(trees[m][s]);
     }
 
     /* Choose split direction based on the target cell's aspect ratio */
@@ -289,32 +304,31 @@ static void attach(int s, Node *leaf) {
     }
 
     /* Wire up the new split node to the parent */
-    if (!t->par)             trees[s] = sp;
+    if (!t->par)             trees[m][s] = sp;
     else if (t->par->a == t) t->par->a = sp;
     else                     t->par->b = sp;
 
-    t->par    = sp;
-    leaf->par = sp;
-    focus[s]  = leaf;
+    t->par      = sp;
+    leaf->par   = sp;
+    focus[m][s] = leaf;
 }
 
-static void detach(int s, Node *n) {
+static void detach(int m, int s, Node *n) {
     if (!n->par) {
-        trees[s] = NULL;
-        focus[s] = NULL;
+        trees[m][s] = NULL;
+        focus[m][s] = NULL;
         return;
     }
     Node *p   = n->par;
     Node *sib = (p->a == n) ? p->b : p->a;
     sib->par  = p->par;
 
-    if (!p->par)             trees[s] = sib;
+    if (!p->par)             trees[m][s] = sib;
     else if (p->par->a == p) p->par->a = sib;
     else                     p->par->b = sib;
 
-    /* if (focus[s] == n) focus[s] = firstleaf(sib); */
-    if (focus[s] == n) {
-        focus[s] = firstleaf(sib);
+    if (focus[m][s] == n) {
+        focus[m][s] = firstleaf(sib);
     }
     free(p);
     n->par = NULL;
@@ -351,12 +365,13 @@ static void tilenode(Node *n, int x, int y, int w, int h, int x_offset, int edge
 
     if (n->leaf) {
         if (n->isfloat) {
+            /* fx/fy are absolute root coordinates already */
             XMoveResizeWindow(dpy, n->win, n->fx + x_offset, n->fy, n->fw, n->fh);
             return;
         }
 
         if (n->isfull) {
-            XMoveResizeWindow(dpy, n->win, x_offset, 0, scrw, disph);
+            XMoveResizeWindow(dpy, n->win, scrx + x_offset, scry, scrw, disph);
             return;
         }
 
@@ -400,7 +415,7 @@ static void place_stage_leaf(Node *n, Node *foc, int *current_y, int master_x, i
     if (n->leaf) {
         if (n == foc) {
             if (n->isfull) {
-                XMoveResizeWindow(dpy, n->win, x_offset, 0, scrw, disph);
+                XMoveResizeWindow(dpy, n->win, scrx + x_offset, scry, scrw, disph);
             } else if (n->isfloat) {
                 XMoveResizeWindow(dpy, n->win, n->fx + x_offset, n->fy, n->fw, n->fh);
             } else {
@@ -417,7 +432,7 @@ static void place_stage_leaf(Node *n, Node *foc, int *current_y, int master_x, i
                 sw = stack_w;
                 sh = stack_h;
             }
-            XMoveResizeWindow(dpy, n->win, GAP_OUTER + x_offset, *current_y, sw, sh);
+            XMoveResizeWindow(dpy, n->win, scrx + GAP_OUTER + x_offset, *current_y, sw, sh);
             *current_y += sh + GAP_INNER;
         }
         return;
@@ -442,11 +457,11 @@ static int get_stack_height(Node *n, Node *foc, int stack_h, float f_scale) {
            get_stack_height(n->b, foc, stack_h, f_scale);
 }
 
-static void canvas_seed_leaf(Node *n, int s) {
+static void canvas_seed_leaf(Node *n, int m, int s) {
     if (!n) return;
     if (!n->leaf) {
-        canvas_seed_leaf(n->a, s);
-        canvas_seed_leaf(n->b, s);
+        canvas_seed_leaf(n->a, m, s);
+        canvas_seed_leaf(n->b, m, s);
         return;
     }
 
@@ -455,15 +470,17 @@ static void canvas_seed_leaf(Node *n, int s) {
     if (n->cw <= 0 || n->ch <= 0) {
         XWindowAttributes wa;
         if (XGetWindowAttributes(dpy, n->win, &wa)) {
-            n->cx = wa.x + canvas_vx[s];
-            n->cy = wa.y - BARH + canvas_vy[s];
+            /* canvas space is monitor-local: strip this monitor's origin
+               (and reserved bar space) before folding in the pan offset */
+            n->cx = (wa.x - scrx) + canvas_vx[m][s];
+            n->cy = (wa.y - scry - topgap) + canvas_vy[m][s];
             n->cw = wa.width > 0 ? wa.width : scrw / 2;
             n->ch = wa.height > 0 ? wa.height : scrh / 2;
         } else {
             n->cw = scrw / 2;
             n->ch = scrh / 2;
-            n->cx = canvas_vx[s] + (scrw - n->cw) / 2;
-            n->cy = canvas_vy[s] + (scrh - n->ch) / 2;
+            n->cx = canvas_vx[m][s] + (scrw - n->cw) / 2;
+            n->cy = canvas_vy[m][s] + (scrh - n->ch) / 2;
         }
     }
 
@@ -474,35 +491,37 @@ static void canvas_seed_leaf(Node *n, int s) {
         PropModeReplace, (unsigned char *)0, 0);
 }
 
-static void canvas_seed_workspace(int s) {
-    canvas_seed_leaf(trees[s], s);
+static void canvas_seed_workspace(int m, int s) {
+    use_monitor(m);
+    canvas_seed_leaf(trees[m][s], m, s);
 }
 
-static void canvas_sync_float_leaf(Node *n, int s) {
+static void canvas_sync_float_leaf(Node *n, int m, int s) {
     if (!n) return;
     if (!n->leaf) {
-        canvas_sync_float_leaf(n->a, s);
-        canvas_sync_float_leaf(n->b, s);
+        canvas_sync_float_leaf(n->a, m, s);
+        canvas_sync_float_leaf(n->b, m, s);
         return;
     }
     if (n->isfloat) {
-        n->fx = n->cx - canvas_vx[s];
-        n->fy = BARH + n->cy - canvas_vy[s];
+        /* fx/fy are absolute; cx/cy are monitor-local canvas coordinates */
+        n->fx = scrx + n->cx - canvas_vx[m][s];
+        n->fy = scry + topgap + n->cy - canvas_vy[m][s];
         n->fw = n->cw;
         n->fh = n->ch;
     }
 }
 
-static void canvas_place_tree(Node *n, int s, int x_offset) {
+static void canvas_place_tree(Node *n, int m, int s, int x_offset) {
     if (!n) return;
     if (!n->leaf) {
-        canvas_place_tree(n->a, s, x_offset);
-        canvas_place_tree(n->b, s, x_offset);
+        canvas_place_tree(n->a, m, s, x_offset);
+        canvas_place_tree(n->b, m, s, x_offset);
         return;
     }
 
-    int x = n->cx - canvas_vx[s] + x_offset;
-    int y = BARH + n->cy - canvas_vy[s];
+    int x = scrx + n->cx - canvas_vx[m][s] + x_offset;
+    int y = scry + topgap + n->cy - canvas_vy[m][s];
     n->x = x;
     n->y = y;
     n->w = n->cw > 0 ? n->cw : scrw / 2;
@@ -536,67 +555,76 @@ static void update_canvas_grabs_leaf(Node *n, int enable) {
 }
 
 static void update_canvas_grabs(void) {
-    int enable = layout_modes[curspace] == 2;
-    for (int s = 0; s < NSPACE; s++)
-        update_canvas_grabs_leaf(trees[s], enable);
+    /* Each monitor tracks its own layout mode per workspace now, so grabs
+       must be (re)evaluated per (monitor, workspace) tree rather than
+       stamped uniformly from a single curspace mode. */
+    for (int m = 0; m < nmon; m++)
+        for (int s = 0; s < NSPACE; s++)
+            update_canvas_grabs_leaf(trees[m][s], layout_modes[m][s] == 2);
 }
 
 static void canvas_center_focus(void) {
-    Node *n = focus[curspace];
+    use_monitor(curmon);
+    Node *n = focus[curmon][curspace];
     if (!n || !n->leaf) return;
-    canvas_vx[curspace] = n->cx - (scrw - n->cw) / 2;
-    canvas_vy[curspace] = n->cy - (scrh - n->ch) / 2;
+    canvas_vx[curmon][curspace] = n->cx - (scrw - n->cw) / 2;
+    canvas_vy[curmon][curspace] = n->cy - (scrh - n->ch) / 2;
     tile();
 }
 
 static void canvas_home(void) {
-    canvas_vx[curspace] = 0;
-    canvas_vy[curspace] = 0;
+    canvas_vx[curmon][curspace] = 0;
+    canvas_vy[curmon][curspace] = 0;
     tile();
 }
 
 static void tile(void) {
-    for (int s = 0; s < NSPACE; s++) {
-        if (!trees[s]) continue;
+    for (int m = 0; m < nmon; m++) {
+        use_monitor(m);
 
-        int x_offset = 0;
-        if (s != curspace) {
-            x_offset = (s < curspace) ? -scrw : scrw;
-        }
+        for (int s = 0; s < NSPACE; s++) {
+            if (!trees[m][s]) continue;
 
-        if (layout_modes[s] == 2) {
-            canvas_place_tree(trees[s], s, x_offset);
-        } else if (layout_modes[s] == 1) {
-            Node *foc = focus[s];
-            if (!foc) foc = firstleaf(trees[s]);
-
-            int stack_width  = (int)(scrw * STAGE_STACK_W_PCT);
-            int master_x     = stack_width + STAGE_GAP_MASTER + x_offset;
-            int master_y     = BARH + STAGE_MARGIN_Y;
-            int master_width = scrw - (stack_width + STAGE_GAP_MASTER) - STAGE_MARGIN_X;
-            int stage_height = scrh - (STAGE_MARGIN_Y * 2);
-            int base_stack_w = stack_width - GAP_OUTER - GAP_INNER;
-            int base_stack_h = (base_stack_w * 9) / 16;
-            float float_scale = 0.25f;
-
-            int total_stack_h = get_stack_height(trees[s], foc, base_stack_h, float_scale);
-            if (total_stack_h > 0) total_stack_h -= GAP_INNER; 
-            int current_y = BARH + (scrh - total_stack_h) / 2;
-            if (current_y < BARH + GAP_OUTER) {
-                current_y = BARH + GAP_OUTER;
+            int x_offset = 0;
+            if (s != curspace) {
+                x_offset = (s < curspace) ? -scrw : scrw;
             }
 
-            place_stage_leaf(trees[s], foc, &current_y, master_x, master_y, master_width, stage_height, base_stack_w, base_stack_h, float_scale, x_offset);
-        } else {
-            tilenode(trees[s], x_offset, BARH, scrw, scrh, x_offset, EDGE_ALL);
-        }
+            if (layout_modes[m][s] == 2) {
+                canvas_place_tree(trees[m][s], m, s, x_offset);
+            } else if (layout_modes[m][s] == 1) {
+                Node *foc = focus[m][s];
+                if (!foc) foc = firstleaf(trees[m][s]);
 
-        if (s == curspace) {
-            raise_floats(trees[s]);
+                int stack_width  = (int)(scrw * STAGE_STACK_W_PCT);
+                int master_x     = scrx + stack_width + STAGE_GAP_MASTER + x_offset;
+                int master_y     = scry + topgap + STAGE_MARGIN_Y;
+                int master_width = scrw - (stack_width + STAGE_GAP_MASTER) - STAGE_MARGIN_X;
+                int stage_height = scrh - (STAGE_MARGIN_Y * 2);
+                int base_stack_w = stack_width - GAP_OUTER - GAP_INNER;
+                int base_stack_h = (base_stack_w * 9) / 16;
+                float float_scale = 0.25f;
+
+                int total_stack_h = get_stack_height(trees[m][s], foc, base_stack_h, float_scale);
+                if (total_stack_h > 0) total_stack_h -= GAP_INNER;
+                int current_y = scry + topgap + (scrh - total_stack_h) / 2;
+                if (current_y < scry + topgap + GAP_OUTER) {
+                    current_y = scry + topgap + GAP_OUTER;
+                }
+
+                place_stage_leaf(trees[m][s], foc, &current_y, master_x, master_y, master_width, stage_height, base_stack_w, base_stack_h, float_scale, x_offset);
+            } else {
+                tilenode(trees[m][s], scrx + x_offset, scry + topgap, scrw, scrh, x_offset, EDGE_ALL);
+            }
+
+            if (s == curspace) {
+                raise_floats(trees[m][s]);
+            }
         }
     }
 
-    Node *f = focus[curspace];
+    use_monitor(curmon);
+    Node *f = focus[curmon][curspace];
     XSetInputFocus(dpy, f ? f->win : root, RevertToPointerRoot, CurrentTime);
     if (f) XRaiseWindow(dpy, f->win);
     update_ewmh_active(f ? f->win : None);
@@ -605,7 +633,7 @@ static void tile(void) {
         XRaiseWindow(dpy, edgewin);
     }
 
-    if (layout_modes[curspace] == 2) {
+    if (layout_modes[curmon][curspace] == 2) {
         if (!barwin) find_bar();
         if (barwin) XRaiseWindow(dpy, barwin);
     }
@@ -615,14 +643,15 @@ static void tile(void) {
 
 /* ── Focus ──────────────────────────────────────────────────────────────── */
 
-static void setfocus(Node *n) {
+static void setfocus(int m, Node *n) {
     if (!n || !n->leaf) return;
     XUngrabPointer(dpy, CurrentTime);
     XUngrabKeyboard(dpy, CurrentTime);
-    focus[curspace] = n;
+    curmon = m;
+    focus[m][curspace] = n;
     XSetInputFocus(dpy, n->win, RevertToPointerRoot, CurrentTime);
     update_ewmh_active(n->win);
-    raise_floats(trees[curspace]);
+    raise_floats(trees[m][curspace]);
     if (n->isfloat)
         XRaiseWindow(dpy, n->win);
     XSync(dpy, False);
@@ -631,13 +660,15 @@ static void setfocus(Node *n) {
 /* ── Remove window from whichever workspace owns it ─────────────────────── */
 
 static int rmwin(Window w) {
-    for (int s = 0; s < NSPACE; s++) {
-        Node *n = findleaf(trees[s], w);
-        if (!n) continue;
-        if (drag_node == n) { drag_node = NULL; drag_mode = 0; }
-        detach(s, n);
-        free(n);
-        return 1;
+    for (int m = 0; m < nmon; m++) {
+        for (int s = 0; s < NSPACE; s++) {
+            Node *n = findleaf(trees[m][s], w);
+            if (!n) continue;
+            if (drag_node == n) { drag_node = NULL; drag_mode = 0; }
+            detach(m, s, n);
+            free(n);
+            return 1;
+        }
     }
     return 0;
 }
@@ -679,8 +710,9 @@ static int collect_wins(Node *n, Window *out, int cap, int count) {
 static void fixtree(void) {
     Window buf[1024];
     int n = 0;
-    for (int s = 0; s < NSPACE; s++)
-        n = collect_wins(trees[s], buf, (int)NELEM(buf), n);
+    for (int m = 0; m < nmon; m++)
+        for (int s = 0; s < NSPACE; s++)
+            n = collect_wins(trees[m][s], buf, (int)NELEM(buf), n);
 
     int removed = 0;
     for (int i = 0; i < n; i++) {
@@ -812,9 +844,13 @@ int main(void) {
                leaf -- the classic "empty slot in the BSP tree" symptom.
                Just show it again instead. */
             int already = 0;
-            for (int s = 0; s < NSPACE && !already; s++)
-                already = (findleaf(trees[s], w) != NULL);
+            for (int m = 0; m < nmon && !already; m++)
+                for (int s = 0; s < NSPACE && !already; s++)
+                    already = (findleaf(trees[m][s], w) != NULL);
             if (already) { XMapWindow(dpy, w); break; }
+
+            /* New windows attach to the currently active monitor */
+            use_monitor(curmon);
 
             int is_float = 0;
             int rule_matched = 0;
@@ -872,16 +908,16 @@ int main(void) {
                 } else {
                     leaf->fw = scrw / 2; leaf->fh = scrh / 2;
                 }
-                leaf->fx = (scrw - leaf->fw) / 2; leaf->fy = BARH + (scrh - leaf->fh) / 2;
+                leaf->fx = scrx + (scrw - leaf->fw) / 2; leaf->fy = scry + topgap + (scrh - leaf->fh) / 2;
             }
 
-            if (layout_modes[curspace] == 2) {
+            if (layout_modes[curmon][curspace] == 2) {
                 leaf->cw = is_float && leaf->fw > 0 ? leaf->fw : (wa.width > 0 ? wa.width : scrw / 2);
                 leaf->ch = is_float && leaf->fh > 0 ? leaf->fh : (wa.height > 0 ? wa.height : scrh / 2);
                 if (leaf->cw < MINSIZE) leaf->cw = MINSIZE;
                 if (leaf->ch < MINSIZE) leaf->ch = MINSIZE;
-                leaf->cx = canvas_vx[curspace] + (scrw - leaf->cw) / 2;
-                leaf->cy = canvas_vy[curspace] + (scrh - leaf->ch) / 2;
+                leaf->cx = canvas_vx[curmon][curspace] + (scrw - leaf->cw) / 2;
+                leaf->cy = canvas_vy[curmon][curspace] + (scrh - leaf->ch) / 2;
             }
 
             XSelectInput(dpy, w, EnterWindowMask | StructureNotifyMask);
@@ -899,11 +935,11 @@ int main(void) {
 
             XSetWindowBackground(dpy, w, ROOT_BG);
             XClearWindow(dpy, w);
-            attach(curspace, leaf);
+            attach(curmon, curspace, leaf);
             update_canvas_grabs();
             tile();
             XMapWindow(dpy, w);
-            setfocus(leaf);
+            setfocus(curmon, leaf);
             break;
         }
 
@@ -929,15 +965,18 @@ int main(void) {
         case ConfigureRequest: {
             Window w = ev.xconfigurerequest.window;
             Node *n = NULL;
-            int owner = -1;
-            for (int s = 0; s < NSPACE; s++) {
-                if ((n = findleaf(trees[s], w))) {
-                    owner = s;
-                    break;
+            int owner_m = -1, owner_s = -1;
+            for (int m = 0; m < nmon && !n; m++) {
+                for (int s = 0; s < NSPACE; s++) {
+                    if ((n = findleaf(trees[m][s], w))) {
+                        owner_m = m;
+                        owner_s = s;
+                        break;
+                    }
                 }
             }
 
-            if (n && owner >= 0 && layout_modes[owner] == 2) {
+            if (n && owner_s >= 0 && layout_modes[owner_m][owner_s] == 2) {
                 ev.xconfigurerequest.value_mask &= ~(CWX | CWY);
                 if (ev.xconfigurerequest.value_mask & CWWidth)
                     n->cw = ev.xconfigurerequest.width;
@@ -949,7 +988,9 @@ int main(void) {
                 if (n->isfull || !n->isfloat) {
                     ev.xconfigurerequest.value_mask &= ~(CWX | CWY | CWWidth | CWHeight);
                 } else {
-                    int is_curspace = (findleaf(trees[curspace], w) != NULL);
+                    /* curspace is shown on every monitor at once, so being
+                       on curspace anywhere makes the window visible */
+                    int is_curspace = (owner_s == curspace);
                     if (!is_curspace) {
                         ev.xconfigurerequest.value_mask &= ~(CWX | CWY);
                     }
@@ -979,16 +1020,24 @@ int main(void) {
                 break;
             }
 
-            /* Bypass hover-focus completely when Stage Manager is active */
-            if (layout_modes[curspace] == 1) break; 
-
             {
-                Node *n = findleaf(trees[curspace], ev.xcrossing.window);
+                /* curspace is shown on every monitor at once, so the
+                   entered window could belong to any of them */
+                int m = -1;
+                Node *n = NULL;
+                for (int mi = 0; mi < nmon && !n; mi++) {
+                    n = findleaf(trees[mi][curspace], ev.xcrossing.window);
+                    if (n) m = mi;
+                }
                 if (n) {
+                    /* Bypass hover-focus when Stage Manager is active on
+                       that monitor's workspace */
+                    if (layout_modes[m][curspace] == 1) break;
                     if (n->isfull && barwin) XLowerWindow(dpy, barwin);
-                    if (!n->isfloat && n != focus[curspace]) {
-                        focus[curspace] = n;
-                        setfocus(n);
+                    if (!n->isfloat && n != focus[m][curspace]) {
+                        setfocus(m, n);
+                    } else {
+                        curmon = m;
                     }
                 }
             }
@@ -999,46 +1048,52 @@ int main(void) {
             Window clicked = ev.xbutton.subwindow
                 ? ev.xbutton.subwindow : ev.xbutton.window;
 
+            /* curspace is shown on every monitor at once: resolve which
+               monitor (and, if any, which leaf) was actually clicked
+               before applying any of the branches below. */
+            int m = -1;
+            Node *n = NULL;
+            for (int mi = 0; mi < nmon && !n; mi++) {
+                n = findleaf(trees[mi][curspace], clicked);
+                if (n) m = mi;
+            }
+            if (m < 0) m = monitor_at(ev.xbutton.x_root, ev.xbutton.y_root);
+            curmon = m;
+
             /* Canvas navigation is deliberately core-X11: a left drag on
                the root pans the camera, and Mod+Ctrl+LMB does the same over
                a client window. */
-            if (layout_modes[curspace] == 2 && ev.xbutton.button == Button1 &&
+            if (layout_modes[m][curspace] == 2 && ev.xbutton.button == Button1 &&
                 (ev.xbutton.state & (MODKEY | CTLKEY)) == (MODKEY | CTLKEY)) {
-                Node *n = findleaf(trees[curspace], clicked);
-                if (n) {
-                    focus[curspace] = n;
-                    setfocus(n);
-                }
+                if (n) setfocus(m, n);
                 pan_ox = ev.xbutton.x_root;
                 pan_oy = ev.xbutton.y_root;
-                pan_vx = canvas_vx[curspace];
-                pan_vy = canvas_vy[curspace];
+                pan_vx = canvas_vx[m][curspace];
+                pan_vy = canvas_vy[m][curspace];
                 pan_active = 1;
                 XGrabPointer(dpy, root, False,
                     PointerMotionMask | ButtonReleaseMask,
                     GrabModeAsync, GrabModeAsync, None, None, CurrentTime);
-            } else if (layout_modes[curspace] == 2 && clicked == root &&
+            } else if (layout_modes[m][curspace] == 2 && clicked == root &&
                        ev.xbutton.button == Button1 &&
                        !(ev.xbutton.state & (MODKEY | CTLKEY))) {
                 pan_ox = ev.xbutton.x_root;
                 pan_oy = ev.xbutton.y_root;
-                pan_vx = canvas_vx[curspace];
-                pan_vy = canvas_vy[curspace];
+                pan_vx = canvas_vx[m][curspace];
+                pan_vy = canvas_vy[m][curspace];
                 pan_active = 1;
                 XGrabPointer(dpy, root, False,
                     PointerMotionMask | ButtonReleaseMask,
                     GrabModeAsync, GrabModeAsync, None, None, CurrentTime);
             /* Check if modifier is held (float drag or canvas window drag) */
             } else if (ev.xbutton.state & MODKEY) {
-                Node *n = findleaf(trees[curspace], clicked);
-                if (n && (n->isfloat || layout_modes[curspace] == 2)) {
-                    focus[curspace] = n;
-                    setfocus(n);
+                if (n && (n->isfloat || layout_modes[m][curspace] == 2)) {
+                    setfocus(m, n);
 
-                    if (layout_modes[curspace] == 1) tile();
+                    if (layout_modes[m][curspace] == 1) tile();
 
                     Window dw; unsigned gw, gh, gb, gd;
-                    if (layout_modes[curspace] == 2) {
+                    if (layout_modes[m][curspace] == 2) {
                         drag_wx = n->cx;
                         drag_wy = n->cy;
                         drag_ww = n->cw;
@@ -1061,16 +1116,14 @@ int main(void) {
                     XAllowEvents(dpy, ReplayPointer, CurrentTime);
                 }
             } else {
-                Node *n = findleaf(trees[curspace], clicked);
-                int was_master = (n == focus[curspace]);
-                
+                int was_master = (n == focus[m][curspace]);
+
                 if (n && !was_master) {
-                    focus[curspace] = n;
-                    setfocus(n);
-                    if (layout_modes[curspace] == 1) tile();
+                    setfocus(m, n);
+                    if (layout_modes[m][curspace] == 1) tile();
                 }
 
-                if (layout_modes[curspace] == 1 && n && !was_master) {
+                if (layout_modes[m][curspace] == 1 && n && !was_master) {
                     XAllowEvents(dpy, AsyncPointer, CurrentTime);
                 } else {
                     XAllowEvents(dpy, ReplayPointer, CurrentTime);
@@ -1094,11 +1147,16 @@ int main(void) {
 
         /* ── Float move / resize ─────────────────────────────────────── */
         case MotionNotify: {
+            /* Drags and pans are always scoped to curmon: setfocus() (or
+               the pan-start branch in ButtonPress) already pinned curmon to
+               whichever monitor owns the thing being dragged/panned. */
+            use_monitor(curmon);
+
             if (pan_active) {
                 XEvent tmp;
                 while (XCheckTypedEvent(dpy, MotionNotify, &tmp)) ev = tmp;
-                canvas_vx[curspace] = pan_vx - (ev.xmotion.x_root - pan_ox);
-                canvas_vy[curspace] = pan_vy - (ev.xmotion.y_root - pan_oy);
+                canvas_vx[curmon][curspace] = pan_vx - (ev.xmotion.x_root - pan_ox);
+                canvas_vy[curmon][curspace] = pan_vy - (ev.xmotion.y_root - pan_oy);
                 tile();
                 break;
             }
@@ -1110,7 +1168,7 @@ int main(void) {
             int dx = ev.xmotion.x_root - drag_ox;
             int dy = ev.xmotion.y_root - drag_oy;
 
-            if (layout_modes[curspace] == 2) {
+            if (layout_modes[curmon][curspace] == 2) {
                 if (drag_mode == 1) {
                     drag_node->cx = drag_wx + dx;
                     drag_node->cy = drag_wy + dy;
@@ -1121,23 +1179,24 @@ int main(void) {
                     if (drag_node->ch < MINSIZE) drag_node->ch = MINSIZE;
                 }
                 XMoveResizeWindow(dpy, drag_node->win,
-                    drag_node->cx - canvas_vx[curspace],
-                    BARH + drag_node->cy - canvas_vy[curspace],
+                    scrx + drag_node->cx - canvas_vx[curmon][curspace],
+                    scry + topgap + drag_node->cy - canvas_vy[curmon][curspace],
                     drag_node->cw, drag_node->ch);
                 break;
             }
 
-            int top_limit = (BAR_POS == 0) ? BARH : 0;
+            int top_limit = (BAR_POS == 0) ? topgap : 0;
             int bot_limit = (BAR_POS == 0) ? disph : scrh;
 
             if (drag_mode == 1) {
-                /* Move */
+                /* Move -- fx/fy/drag_wx/drag_wy are absolute root
+                   coordinates, clamped to the owning monitor's own rect */
                 int nx = drag_wx + dx;
                 int ny = drag_wy + dy;
-                if (nx < 0) nx = 0;
-                if (ny < top_limit) ny = top_limit;
-                if (nx + drag_ww > scrw) nx = scrw - drag_ww;
-                if (ny + drag_wh > bot_limit) ny = bot_limit - drag_wh;
+                if (nx < scrx) nx = scrx;
+                if (ny < scry + top_limit) ny = scry + top_limit;
+                if (nx + drag_ww > scrx + scrw) nx = scrx + scrw - drag_ww;
+                if (ny + drag_wh > scry + bot_limit) ny = scry + bot_limit - drag_wh;
 
                 drag_node->fx = nx;
                 drag_node->fy = ny;
@@ -1148,9 +1207,9 @@ int main(void) {
                 int nh = drag_wh + dy;
                 if (nw < MINSIZE) nw = MINSIZE;
                 if (nh < MINSIZE) nh = MINSIZE;
-                if (drag_wx + nw > scrw) nw = scrw - drag_wx;
-                if (drag_wy + nh > bot_limit) nh = bot_limit - drag_wy;
-                
+                if (drag_wx + nw > scrx + scrw) nw = scrx + scrw - drag_wx;
+                if (drag_wy + nh > scry + bot_limit) nh = scry + bot_limit - drag_wy;
+
                 drag_node->fw = nw;
                 drag_node->fh = nh;
                 XResizeWindow(dpy, drag_node->win, nw, nh);
@@ -1174,7 +1233,8 @@ int main(void) {
                 if (sym != keys[i].sym || keys[i].mod != ev.xkey.state) continue;
 
                 Arg   a   = keys[i].arg;
-                Node *foc = focus[curspace];
+                use_monitor(curmon);
+                Node *foc = focus[curmon][curspace];
 
                 switch (keys[i].act) {
 
@@ -1194,19 +1254,18 @@ int main(void) {
                         update_ewmh_desktop();
                         update_canvas_grabs();
                         tile();
-                        if (focus[curspace]) setfocus(focus[curspace]);
+                        if (focus[curmon][curspace]) setfocus(curmon, focus[curmon][curspace]);
                     }
                     break;
 
                 case CYCLE:
-                    if (trees[curspace]) {
+                    if (trees[curmon][curspace]) {
                         Node *n = (a.i > 0)
-                            ? nextleaf(foc, curspace)
-                            : prevleaf(foc, curspace);
+                            ? nextleaf(foc, curmon, curspace)
+                            : prevleaf(foc, curmon, curspace);
                         if (n && n != foc) {
-                            focus[curspace] = n;
-                            setfocus(n);
-                            if (layout_modes[curspace] == 1) tile();
+                            setfocus(curmon, n);
+                            if (layout_modes[curmon][curspace] == 1) tile();
                         }
                     }
                     break;
@@ -1221,7 +1280,7 @@ int main(void) {
                     break;
 
                 case FULLSCR:
-                    if (layout_modes[curspace] == 2) break;
+                    if (layout_modes[curmon][curspace] == 2) break;
                     if (foc) {
                         foc->isfull ^= 1;
                         if (!barwin) find_bar();
@@ -1249,8 +1308,8 @@ int main(void) {
                         if (foc->isfloat) {
                             foc->fw = scrw / 2;
                             foc->fh = scrh / 2;
-                            foc->fx = (scrw - foc->fw) / 2;
-                            foc->fy = BARH + (scrh - foc->fh) / 2;
+                            foc->fx = scrx + (scrw - foc->fw) / 2;
+                            foc->fy = scry + topgap + (scrh - foc->fh) / 2;
 
                             XMoveResizeWindow(dpy, foc->win, foc->fx, foc->fy, foc->fw, foc->fh);
                             XGrabButton(dpy, Button1, MODKEY, foc->win, False,
@@ -1277,36 +1336,39 @@ int main(void) {
 
                 case SWAP:
                     /* Swap the windows of two adjacent leaves */
-                    if (trees[curspace] && foc) {
+                    if (trees[curmon][curspace] && foc) {
                         Node *other = (a.i > 0)
-                            ? nextleaf(foc, curspace)
-                            : prevleaf(foc, curspace);
+                            ? nextleaf(foc, curmon, curspace)
+                            : prevleaf(foc, curmon, curspace);
                         if (other && other != foc) {
                             Window tmp  = foc->win;
                             foc->win    = other->win;
                             other->win  = tmp;
-                            focus[curspace] = other;
+                            focus[curmon][curspace] = other;
                             tile();
-                            setfocus(other);
+                            setfocus(curmon, other);
                         }
                     }
                     break;
 
                 case SEND:
+                    /* SEND moves a window between workspaces on the same
+                       monitor -- use the dedicated monitor keybinds to move
+                       a window across monitors instead. */
                     if (foc && a.i >= 0 && a.i < NSPACE && a.i != curspace) {
                         Window w = foc->win;
-                        detach(curspace, foc);
+                        detach(curmon, curspace, foc);
                         foc->isfloat = 0;
                         foc->isfull  = 0;
-                        if (layout_modes[a.i] == 2) {
-                            canvas_seed_leaf(foc, a.i);
-                            foc->cx = canvas_vx[a.i] + (scrw - foc->cw) / 2;
-                            foc->cy = canvas_vy[a.i] + (scrh - foc->ch) / 2;
+                        if (layout_modes[curmon][a.i] == 2) {
+                            canvas_seed_leaf(foc, curmon, a.i);
+                            foc->cx = canvas_vx[curmon][a.i] + (scrw - foc->cw) / 2;
+                            foc->cy = canvas_vy[curmon][a.i] + (scrh - foc->ch) / 2;
                         }
-                        attach(a.i, foc);
+                        attach(curmon, a.i, foc);
                         tile();
                         /* focus something in the current workspace */
-                        if (focus[curspace]) setfocus(focus[curspace]);
+                        if (focus[curmon][curspace]) setfocus(curmon, focus[curmon][curspace]);
                         (void)w;
                     }
                     break;
@@ -1319,7 +1381,7 @@ int main(void) {
                         update_ewmh_desktop();
                         update_canvas_grabs();
                         tile();
-                        if (focus[curspace]) setfocus(focus[curspace]);
+                        if (focus[curmon][curspace]) setfocus(curmon, focus[curmon][curspace]);
                     }
                     break;
                 }
@@ -1332,35 +1394,35 @@ int main(void) {
                     break;
 
                 case TOGGLE_STAGE:
-                    if (layout_modes[curspace] != 2) {
-                        layout_modes[curspace] ^= 1;
+                    if (layout_modes[curmon][curspace] != 2) {
+                        layout_modes[curmon][curspace] ^= 1;
                         tile();
                     }
                     break;
 
                 case TOGGLE_CANVAS:
-                    if (layout_modes[curspace] == 2) {
-                        canvas_sync_float_leaf(trees[curspace], curspace);
-                        layout_modes[curspace] = canvas_prev_modes[curspace];
+                    if (layout_modes[curmon][curspace] == 2) {
+                        canvas_sync_float_leaf(trees[curmon][curspace], curmon, curspace);
+                        layout_modes[curmon][curspace] = canvas_prev_modes[curmon][curspace];
                         update_canvas_grabs();
                         tile();
                     } else {
-                        canvas_prev_modes[curspace] = layout_modes[curspace];
-                        canvas_seed_workspace(curspace);
+                        canvas_prev_modes[curmon][curspace] = layout_modes[curmon][curspace];
+                        canvas_seed_workspace(curmon, curspace);
                         XUnmapWindow(dpy, edgewin);
                         if (barwin) XRaiseWindow(dpy, barwin);
-                        layout_modes[curspace] = 2;
+                        layout_modes[curmon][curspace] = 2;
                         update_canvas_grabs();
                         tile();
                     }
                     break;
 
                 case CENTER_CANVAS:
-                    if (layout_modes[curspace] == 2) canvas_center_focus();
+                    if (layout_modes[curmon][curspace] == 2) canvas_center_focus();
                     break;
 
                 case CANVAS_HOME:
-                    if (layout_modes[curspace] == 2) canvas_home();
+                    if (layout_modes[curmon][curspace] == 2) canvas_home();
                     break;
 
                 case FIXTREE:
