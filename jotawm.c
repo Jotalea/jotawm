@@ -151,6 +151,22 @@ static void detect_monitors(void) {
     if (curmon >= nmon) curmon = 0;
 }
 
+/* Outer bounding box of every monitor combined -- the full virtual desktop,
+   used to let a floating window be dragged across a monitor seam instead of
+   being clamped to whichever monitor it started on. */
+static void virtual_bounds(int *x0, int *y0, int *x1, int *y1) {
+    *x0 = monitors[0].x;
+    *y0 = monitors[0].y;
+    *x1 = monitors[0].x + monitors[0].w;
+    *y1 = monitors[0].y + monitors[0].h;
+    for (int m = 1; m < nmon; m++) {
+        if (monitors[m].x < *x0) *x0 = monitors[m].x;
+        if (monitors[m].y < *y0) *y0 = monitors[m].y;
+        if (monitors[m].x + monitors[m].w > *x1) *x1 = monitors[m].x + monitors[m].w;
+        if (monitors[m].y + monitors[m].h > *y1) *y1 = monitors[m].y + monitors[m].h;
+    }
+}
+
 /* Which monitor contains the point (px, py)? Falls back to curmon if the
    point lies outside every known monitor rect (shouldn't normally happen
    for a live pointer position, but geometry can be stale mid-drag). */
@@ -1191,6 +1207,22 @@ int main(void) {
                 pan_active = 0;
             }
             if (drag_mode) {
+                /* A floating window (outside canvas mode, which has its own
+                   independent per-monitor coordinate space) that was moved
+                   onto another monitor now belongs to that monitor's tree,
+                   at whatever spot its drop position implies. */
+                if (drag_mode == 1 && drag_node && drag_node->isfloat &&
+                    layout_modes[curmon][curspace] != 2) {
+                    int cx = drag_node->fx + drag_node->fw / 2;
+                    int cy = drag_node->fy + drag_node->fh / 2;
+                    int target = monitor_at(cx, cy);
+                    if (target != curmon) {
+                        detach(curmon, curspace, drag_node);
+                        attach(target, curspace, drag_node);
+                        tile();
+                        setfocus(target, drag_node);
+                    }
+                }
                 XUngrabPointer(dpy, CurrentTime);
                 drag_mode = 0;
                 drag_node = NULL;
@@ -1237,24 +1269,31 @@ int main(void) {
                 break;
             }
 
-            int top_limit = (BAR_POS == 0) ? topgap : 0;
-            int bot_limit = (BAR_POS == 0) ? disph : scrh;
-
             if (drag_mode == 1) {
                 /* Move -- fx/fy/drag_wx/drag_wy are absolute root
-                   coordinates, clamped to the owning monitor's own rect */
+                   coordinates. Clamp to the full virtual desktop (every
+                   monitor combined) rather than just the owning monitor, so
+                   the window can be dragged across a monitor seam; it's
+                   reassigned to whichever monitor it lands on when the drag
+                   ends, in ButtonRelease. */
+                int vx0, vy0, vx1, vy1;
+                virtual_bounds(&vx0, &vy0, &vx1, &vy1);
+
                 int nx = drag_wx + dx;
                 int ny = drag_wy + dy;
-                if (nx < scrx) nx = scrx;
-                if (ny < scry + top_limit) ny = scry + top_limit;
-                if (nx + drag_ww > scrx + scrw) nx = scrx + scrw - drag_ww;
-                if (ny + drag_wh > scry + bot_limit) ny = scry + bot_limit - drag_wh;
+                if (nx < vx0) nx = vx0;
+                if (ny < vy0) ny = vy0;
+                if (nx + drag_ww > vx1) nx = vx1 - drag_ww;
+                if (ny + drag_wh > vy1) ny = vy1 - drag_wh;
 
                 drag_node->fx = nx;
                 drag_node->fy = ny;
                 XMoveWindow(dpy, drag_node->win, nx, ny);
             } else {
-                /* Resize */
+                /* Resize -- stays clamped to the owning monitor; there's no
+                   sensible monitor to hand a resize across a seam to */
+                int bot_limit = (BAR_POS == 0) ? disph : scrh;
+
                 int nw = drag_ww + dx;
                 int nh = drag_wh + dy;
                 if (nw < MINSIZE) nw = MINSIZE;
