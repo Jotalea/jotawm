@@ -28,7 +28,7 @@ static Rule rules[] = {
     { "steam_app_",     1 },
 };
 
-enum { EXEC, VIEW, CYCLE, SWAP, SEND, RESIZE, FULLSCR, CLOSE, QUIT, FLOAT, SPLITDIR, VIEW_ADJ, TOGGLE_STAGE, FIXTREE, TOGGLE_CANVAS, CENTER_CANVAS, CANVAS_HOME };
+enum { EXEC, VIEW, CYCLE, SWAP, SEND, RESIZE, FULLSCR, CLOSE, QUIT, FLOAT, SPLITDIR, VIEW_ADJ, TOGGLE_STAGE, FIXTREE, TOGGLE_CANVAS, CENTER_CANVAS, CANVAS_HOME, FOCUSMON, SENDMON };
 
 typedef union  { int i; float f; const char **v; } Arg;
 typedef struct { unsigned int mod; KeySym sym; int act; Arg arg; } Key;
@@ -104,6 +104,12 @@ static Key keys[] = {
         { MODKEY,           XK_g,      TOGGLE_CANVAS, {0}         },
         { MODKEY,           XK_c,      CENTER_CANVAS, {0}         },
         { MODKEY,           XK_Home,   CANVAS_HOME,   {0}         },
+
+        /* move focus / windows across monitors */
+        { MODKEY,           XK_comma,  FOCUSMON, {.i = -1}        },
+        { MODKEY,           XK_period, FOCUSMON, {.i = +1}        },
+        { MODKEY|SHTKEY,    XK_comma,  SENDMON,  {.i = -1}        },
+        { MODKEY|SHTKEY,    XK_period, SENDMON,  {.i = +1}        },
 
         /* media / brightness */
         VL(XF86XK_AudioRaiseVolume,  "+5%"),

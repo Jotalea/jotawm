@@ -1481,6 +1481,47 @@ int main(void) {
                     fixtree();
                     break;
 
+                case FOCUSMON:
+                    if (nmon > 1) {
+                        int target = (curmon + a.i + nmon) % nmon;
+                        XWarpPointer(dpy, None, root, 0, 0, 0, 0,
+                            monitors[target].x + monitors[target].w / 2,
+                            monitors[target].y + monitors[target].h / 2);
+                        curmon = target;
+                        if (focus[target][curspace]) {
+                            setfocus(target, focus[target][curspace]);
+                        } else {
+                            use_monitor(target);
+                            XSetInputFocus(dpy, root, RevertToPointerRoot, CurrentTime);
+                            update_ewmh_active(None);
+                        }
+                    }
+                    break;
+
+                case SENDMON:
+                    /* Same workspace index, different monitor -- the mirror
+                       image of SEND, which moves across workspaces on the
+                       same monitor instead. */
+                    if (foc && nmon > 1) {
+                        int target = (curmon + a.i + nmon) % nmon;
+                        if (target != curmon) {
+                            detach(curmon, curspace, foc);
+                            if (layout_modes[target][curspace] == 2) {
+                                use_monitor(target);
+                                canvas_seed_leaf(foc, target, curspace);
+                                foc->cx = canvas_vx[target][curspace] + (scrw - foc->cw) / 2;
+                                foc->cy = canvas_vy[target][curspace] + (scrh - foc->ch) / 2;
+                            }
+                            attach(target, curspace, foc);
+                            tile();
+                            setfocus(target, foc);
+                            XWarpPointer(dpy, None, root, 0, 0, 0, 0,
+                                monitors[target].x + monitors[target].w / 2,
+                                monitors[target].y + monitors[target].h / 2);
+                        }
+                    }
+                    break;
+
                 }
             }
             break;
