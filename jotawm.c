@@ -9,6 +9,7 @@
 #include <X11/XF86keysym.h>
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
+#include <X11/extensions/Xinerama.h>
 
 #include "jotawm.h"
 
@@ -63,6 +64,20 @@ static int scrw, scrh, curspace, running = 1;
 static int prevspace = 0;
 static int disph;
 static Window barwin = 0, edgewin = 0;
+
+/* ── Monitors ───────────────────────────────────────────────────────────── */
+
+typedef struct {
+    int x, y, w, h;    /* full geometry, root-window coordinates */
+} Monitor;
+
+static Monitor monitors[MAXMONITOR];
+static int nmon = 1;
+static int curmon = 0;
+
+/* current-monitor context: refreshed by use_monitor() before any geometry
+   math, mirroring how curspace already drives implicit array access below */
+static int scrx, scry, topgap;
 static Atom net_wm_state, net_wm_state_full;
 static Atom net_wm_window_type, net_wm_window_type_dialog;
 static Atom net_active_window;
@@ -86,6 +101,53 @@ static int   drag_ww, drag_wh;             /* window size       */
 static int pan_ox, pan_oy;
 static int pan_vx, pan_vy;
 static int pan_active;
+
+/* ── Monitor detection ──────────────────────────────────────────────────── */
+
+static int monitor_has_bar(int m) {
+    return BAR_MONITOR < 0 || BAR_MONITOR == m;
+}
+
+/* Point every "current monitor" global at monitor m. Call this before any
+   tiling/geometry math that reads scrw/scrh/scrx/scry/topgap or the legacy
+   disph, the same way curspace is implicitly read by the array indices
+   throughout this file. */
+static void use_monitor(int m) {
+    scrx   = monitors[m].x;
+    scry   = monitors[m].y;
+    disph  = monitors[m].h;
+    scrw   = monitors[m].w;
+    topgap = monitor_has_bar(m) ? BARH : 0;
+    scrh   = disph - topgap;
+}
+
+/* Static detection: queried once at startup. Outputs added or removed at
+   runtime require a jotawm restart to be picked up. */
+static void detect_monitors(void) {
+    int n = 0;
+    if (XineramaIsActive(dpy)) {
+        XineramaScreenInfo *info = XineramaQueryScreens(dpy, &n);
+        if (info) {
+            if (n > MAXMONITOR) n = MAXMONITOR;
+            for (int i = 0; i < n; i++) {
+                monitors[i].x = info[i].x_org;
+                monitors[i].y = info[i].y_org;
+                monitors[i].w = info[i].width;
+                monitors[i].h = info[i].height;
+            }
+            XFree(info);
+        }
+    }
+    if (n <= 0) {
+        n = 1;
+        monitors[0].x = 0;
+        monitors[0].y = 0;
+        monitors[0].w = DisplayWidth(dpy, 0);
+        monitors[0].h = DisplayHeight(dpy, 0);
+    }
+    nmon = n;
+    if (curmon >= nmon) curmon = 0;
+}
 
 /* ── Error handler ──────────────────────────────────────────────────────── */
 
@@ -678,9 +740,9 @@ int main(void) {
     XSetWindowBackground(dpy, root, ROOT_BG);
     XClearWindow(dpy, root);
 
-    disph = DisplayHeight(dpy, 0);
-    scrw = DisplayWidth(dpy, 0);
-    scrh = disph - BARH;
+    detect_monitors();
+    curmon = 0;
+    use_monitor(curmon);
 
     net_wm_state = XInternAtom(dpy, "_NET_WM_STATE", False);
     net_wm_state_full = XInternAtom(dpy, "_NET_WM_STATE_FULLSCREEN", False);

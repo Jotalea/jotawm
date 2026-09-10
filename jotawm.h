@@ -1,5 +1,7 @@
 #define NSPACE     9
 #define NCLIENT    64             /* kept for compatibility; BSP has no hard cap */
+#define MAXMONITOR 8              /* hard cap on detected outputs */
+#define BAR_MONITOR 0             /* which monitor reserves space for the bar: an index, or -1 for every monitor */
 #define BARH       24
 #define BAR_POS    0              /* 0 for top, 1 for bottom */
 #define GAP_OUTER  8 /*8*/        /* px gap between windows and screen edges */
