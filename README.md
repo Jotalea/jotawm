@@ -9,7 +9,7 @@ A minimal tiling window manager for X11.
 
 ## dependencies
 
-* Xlib header files
+* Xlib and Xinerama header files
 * a standard C compiler
 * `make`
 
@@ -40,6 +40,8 @@ the default modifier key (`Mod`) is set to `Mod4Mask` (Super/windows key).
 
 the default terminal is `kitty`, and the default menu is `rofi`. make sure these are installed or edit the `termcmd` and `menucmd` arrays to match your preferred software.
 
+monitors are detected once at startup via Xinerama; connecting or disconnecting a display requires restarting `jotawm` to be picked up. `MAXMONITOR` in `jotawm.h` caps how many outputs are tracked, and `BAR_MONITOR` picks which one reserves space for a status bar (an index, or `-1` for every monitor).
+
 ## keybinds
 
 * **Mod + t** : spawn terminal
@@ -65,6 +67,8 @@ the default terminal is `kitty`, and the default menu is `rofi`. make sure these
 * **Mod + LMB drag** : move window around the canvas
 * **Mod + RMB drag** : resize window in floating and canvas mode
 * **Mod + PgUp / PgDown** : switch to previous / next workspace
+* **Mod + comma / period** : move focus to the previous / next monitor
+* **Mod + Shift + comma / period** : move the focused window to the previous / next monitor
 * **XF86AudioRaiseVolume / LowerVolume** : increase / decrease volume (pactl)
 * **XF86MonBrightnessUp / Down** : increase / decrease brightness
 
@@ -98,6 +102,14 @@ this mode is similar to a master-stack layout, where a main focused window will 
 ### canvas mode
 
 in this mode, windows are floating in a scrollable 2d canvas.
+
+## multiple monitors
+
+each monitor keeps its own tiling tree per workspace. switching workspaces (**Mod + [1-9]**, **Mod + PgUp/PgDown**) changes what every monitor shows at once, since a workspace number is shared across all of them -- but each monitor's content for that workspace is independent, the same way Windows' virtual desktops work when a display isn't set to "show windows on all displays".
+
+after a workspace switch, keyboard focus goes to whatever is under the cursor; if there's nothing there, it goes to the nearest window, even on another monitor; if there's nothing anywhere, nothing is focused. the cursor itself never moves on a workspace switch -- only **Mod + comma/period** warps it, since it also has to hand focus to a different monitor.
+
+dragging a floating window across a monitor's edge reassigns it to that monitor once you let go of it (canvas mode is the exception: each monitor's canvas is its own independent coordinate space, so a canvas window can't currently be dragged across monitors -- send it with **Mod + Shift + comma/period** instead).
 
 ## recommended software
 this is software that i personally recommend to use alongside jotawm
