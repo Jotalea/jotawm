@@ -2,6 +2,8 @@
 #include <signal.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/select.h>
+#include <time.h>
 #include <unistd.h>
 #include <X11/cursorfont.h>
 #include <X11/keysym.h>
@@ -103,6 +105,13 @@ static int   drag_ww, drag_wh;             /* window size       */
 static int pan_ox, pan_oy;
 static int pan_vx, pan_vy;
 static int pan_active;
+
+/* Edge panning while a client-side drag is in flight (see dragpan_tick) */
+static int  dragpan_armed;      /* a button is down: keep sampling the pointer */
+static int  dragpan_active;     /* the camera is being stepped right now       */
+static long dragpan_last_tick;  /* monotonic ms of the last camera step        */
+static int  dragpan_saw_xdnd;   /* XdndSelection was owned during this hold    */
+static Atom xdnd_selection;
 
 /* ── Monitor detection ──────────────────────────────────────────────────── */
 
@@ -822,6 +831,199 @@ static void grab_keys(void) {
     }
 }
 
+/* ── Pointer button grabs ───────────────────────────────────────────────── */
+
+/* Grab a button through every combination of the lock modifiers, the way
+   grab_keys() already does for keybinds, so a binding doesn't quietly stop
+   working with Caps Lock or Num Lock on. */
+static void grab_button_variants(unsigned int button, unsigned int mods, Window w) {
+    unsigned int locks[] = { 0, LockMask, Mod2Mask, LockMask | Mod2Mask };
+    for (size_t i = 0; i < NELEM(locks); i++) {
+        XGrabButton(dpy, button, mods | locks[i], w, False,
+            ButtonPressMask | ButtonReleaseMask | PointerMotionMask,
+            GrabModeAsync, GrabModeAsync, None, None);
+    }
+}
+
+/* MODKEY + wheel (focus) and MODKEY + CTRL + wheel (workspace). Registered on
+   the root and on every managed window, since a wheel event over a client
+   would otherwise go straight to that client. */
+static void grab_scroll(Window w) {
+    if (!SCROLL_CYCLE) return;
+    grab_button_variants(Button4, MODKEY, w);
+    grab_button_variants(Button5, MODKEY, w);
+    grab_button_variants(Button4, MODKEY | CTLKEY, w);
+    grab_button_variants(Button5, MODKEY | CTLKEY, w);
+}
+
+/* ── Shared actions (keybind and wheel) ─────────────────────────────────── */
+
+static void cycle_focus(int dir) {
+    use_monitor(curmon);
+    Node *foc = focus[curmon][curspace];
+
+    if (trees[curmon][curspace]) {
+        Node *n = (dir > 0)
+            ? nextleaf(foc, curmon, curspace)
+            : prevleaf(foc, curmon, curspace);
+        if (n && n != foc) {
+            setfocus(curmon, n);
+            if (layout_modes[curmon][curspace] == 1) tile();
+        }
+    }
+    if (layout_modes[curmon][curspace] == 2) {
+        canvas_center_focus();
+    }
+}
+
+static void view_adjacent(int delta) {
+    int next = curspace + delta;
+    if (next < 0 || next >= NSPACE) return;
+
+    use_monitor(curmon);
+
+    prevspace = curspace;
+    curspace = next;
+    update_ewmh_desktop();
+    update_canvas_grabs();
+    tile();
+    focus_switch_target();
+}
+
+/* ── Drag-and-drop canvas navigation ─────────────────────────────────────
+ * A client-side drag -- a file pulled out of a file manager, a selection
+ * pulled out of a browser -- grabs the pointer for its whole duration. From
+ * the moment it starts jotawm stops seeing pointer events entirely: no
+ * MotionNotify, no ButtonRelease, and no passive grab of ours can fire while
+ * another client holds the device. That rules out driving the camera from a
+ * second mouse button mid-drag: the press never reaches us, and toolkits
+ * generally read an extra button as "cancel the drag" anyway.
+ *
+ * XQueryPointer does keep working through a foreign grab, so the drag is
+ * followed by sampling instead of by events. The press that may become a
+ * drag is still visible (every managed window carries a synchronous Button1
+ * grab for click-to-focus), and from there a timer polls the pointer until
+ * the button comes back up. Parking it within DRAGPAN_MARGIN of a monitor
+ * edge pans that monitor's canvas toward the edge.
+ *
+ * The drop itself is left entirely alone: the camera moves windows under a
+ * stationary cursor, and the drag source resolves its target from whatever
+ * sits under the pointer when the button is released. ── */
+
+static long now_ms(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (long)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+}
+
+static void dragpan_arm(void) {
+    /* Nothing to follow unless a canvas is actually on screen: every other
+       layout mode would poll the pointer for a pan it can never perform. */
+    int canvas = 0;
+    for (int m = 0; m < nmon && !canvas; m++)
+        canvas = (layout_modes[m][curspace] == 2);
+    if (!canvas) return;
+
+    dragpan_armed     = 1;
+    dragpan_active    = 0;
+    dragpan_saw_xdnd  = 0;
+    dragpan_last_tick = now_ms();
+}
+
+static void dragpan_disarm(void) {
+    dragpan_armed  = 0;
+    dragpan_active = 0;
+}
+
+/* 1px per tick at the outer edge of the margin, DRAGPAN_SPEED right at the
+   screen edge: how fast the canvas moves stays under the pointer's control.
+   Distances past the edge (the bar strip, a monitor seam) clamp to full
+   speed rather than reversing. */
+static int dragpan_ramp(int dist) {
+    if (dist < 0) dist = 0;
+    int step = DRAGPAN_SPEED * (DRAGPAN_MARGIN - dist) / DRAGPAN_MARGIN;
+    return step < 1 ? 1 : step;
+}
+
+static void dragpan_tick(void) {
+    long now = now_ms();
+    if (now - dragpan_last_tick < DRAGPAN_TICK_MS) return;
+    dragpan_last_tick = now;
+
+    Window rr, cr;
+    int rx, ry, wx, wy;
+    unsigned int mask;
+    if (!XQueryPointer(dpy, root, &rr, &cr, &rx, &ry, &wx, &wy, &mask)) {
+        dragpan_disarm();
+        return;
+    }
+
+    /* The button came back up somewhere we couldn't see it: the drop (or the
+       cancel) has already happened and there is nothing left to follow. */
+    if (!(mask & (Button1Mask | Button2Mask | Button3Mask))) {
+        dragpan_disarm();
+        return;
+    }
+
+    if (DRAGPAN_NEEDS_MOD) {
+        if (!(mask & MODKEY)) { dragpan_active = 0; return; }
+    } else {
+        /* With no modifier to say so, the only hint that this hold is a real
+           drag-and-drop rather than a selection inside a window is that some
+           client owns XdndSelection. A source keeps that selection after its
+           drag ends, so this rules out "nothing has ever been dragged this
+           session" -- it is a filter, not proof that a drag is running. */
+        if (!dragpan_saw_xdnd && XGetSelectionOwner(dpy, xdnd_selection) != None)
+            dragpan_saw_xdnd = 1;
+        if (!dragpan_saw_xdnd) { dragpan_active = 0; return; }
+    }
+
+    int m = monitor_at(rx, ry);
+    if (layout_modes[m][curspace] != 2) { dragpan_active = 0; return; }
+    use_monitor(m);
+
+    int top = scry + topgap;
+    int dl  = rx - scrx,             dr = (scrx + scrw - 1) - rx;
+    int dt  = ry - top,              db = (top + scrh - 1) - ry;
+
+    int dx = 0, dy = 0;
+    if      (dl < DRAGPAN_MARGIN && dl <= dr) dx = -dragpan_ramp(dl);
+    else if (dr < DRAGPAN_MARGIN)             dx = +dragpan_ramp(dr);
+    if      (dt < DRAGPAN_MARGIN && dt <= db) dy = -dragpan_ramp(dt);
+    else if (db < DRAGPAN_MARGIN)             dy = +dragpan_ramp(db);
+
+    if (!dx && !dy) { dragpan_active = 0; return; }
+
+    dragpan_active = 1;
+    canvas_vx[m][curspace] += dx;
+    canvas_vy[m][curspace] += dy;
+    tile();
+}
+
+/* Block for the next event, but no longer than timeout_ms. Returns 1 if an
+   event was read. Only used while a drag is being followed -- the rest of
+   the time the loop sleeps in XNextEvent as before. */
+static int next_event_timed(XEvent *ev, int timeout_ms) {
+    if (XPending(dpy)) { XNextEvent(dpy, ev); return 1; }
+
+    int fd = ConnectionNumber(dpy);
+    XFlush(dpy);
+
+    fd_set fds;
+    FD_ZERO(&fds);
+    FD_SET(fd, &fds);
+    struct timeval tv = {
+        .tv_sec  = timeout_ms / 1000,
+        .tv_usec = (timeout_ms % 1000) * 1000,
+    };
+
+    if (select(fd + 1, &fds, NULL, NULL, &tv) > 0 && XPending(dpy)) {
+        XNextEvent(dpy, ev);
+        return 1;
+    }
+    return 0;
+}
+
 /* ── Entry point ────────────────────────────────────────────────────────── */
 
 int main(void) {
@@ -849,6 +1051,7 @@ int main(void) {
     net_wm_window_type = XInternAtom(dpy, "_NET_WM_WINDOW_TYPE", False);
     net_wm_window_type_dialog = XInternAtom(dpy, "_NET_WM_WINDOW_TYPE_DIALOG", False);
     net_active_window = XInternAtom(dpy, "_NET_ACTIVE_WINDOW", False);
+    xdnd_selection = XInternAtom(dpy, "XdndSelection", False);
 
     Atom net_supported = XInternAtom(dpy, "_NET_SUPPORTED", False);
     Atom net_desks      = XInternAtom(dpy, "_NET_NUMBER_OF_DESKTOPS", False);
@@ -900,10 +1103,25 @@ int main(void) {
     XGrabButton(dpy, Button3, MODKEY, root, False,
         ButtonPressMask | ButtonReleaseMask | PointerMotionMask,
         GrabModeAsync, GrabModeAsync, None, None);
+    grab_scroll(root);
 
     signal(SIGCHLD, SIG_IGN);
 
-    while (running && !XNextEvent(dpy, &ev)) {
+    while (running) {
+        /* While a drag is being followed the pointer has to be sampled on a
+           timer: its owner has grabbed the device, so waiting for an event
+           that will never arrive would stall the pan. */
+        if (dragpan_armed) {
+            if (!next_event_timed(&ev, DRAGPAN_TICK_MS)) {
+                dragpan_tick();
+                continue;
+            }
+        } else if (XNextEvent(dpy, &ev)) {
+            break;
+        }
+
+        if (dragpan_armed) dragpan_tick();
+
         switch (ev.type) {
 
         /* ── New window ──────────────────────────────────────────────── */
@@ -1009,6 +1227,7 @@ int main(void) {
             XGrabButton(dpy, Button3, MODKEY, w, False,
                 ButtonPressMask | ButtonReleaseMask | PointerMotionMask,
                 GrabModeAsync, GrabModeAsync, None, None);
+            grab_scroll(w);
             /* Also grab plain Button1 for click-to-focus */
             XGrabButton(dpy, Button1, AnyModifier, w, False,
                 ButtonPressMask, GrabModeSync, GrabModeAsync, None, None);
@@ -1094,6 +1313,10 @@ int main(void) {
             if (ev.xcrossing.mode != NotifyNormal ||
                 ev.xcrossing.detail == NotifyInferior) break;
 
+            /* An edge pan slides windows under a stationary cursor, which
+               would otherwise hand focus to each one as it passes. */
+            if (dragpan_active) break;
+
             {
                 int edge_m = -1;
                 for (int mi = 0; mi < nmon; mi++) {
@@ -1145,6 +1368,24 @@ int main(void) {
             }
             if (m < 0) m = monitor_at(ev.xbutton.x_root, ev.xbutton.y_root);
             curmon = m;
+
+            /* Wheel bindings. X11 reports the wheel as buttons 4/5, so a
+               wheel event has to be taken out of the chain entirely before
+               the drag branches below -- MODKEY on its own would otherwise
+               read as the start of a float resize. Comparing only the
+               modifiers we bind drops the lock bits and the button bits
+               (which report what is *already* held) with them, so the two
+               combos stay distinguishable from each other. */
+            if (ev.xbutton.button == Button4 || ev.xbutton.button == Button5) {
+                if (SCROLL_CYCLE && !pan_active && !drag_mode) {
+                    unsigned int mods = ev.xbutton.state & (SHTKEY | CTLKEY | ALTKEY | MODKEY);
+                    int dir = (ev.xbutton.button == Button5) ? +1 : -1;
+
+                    if (mods == (MODKEY | CTLKEY)) view_adjacent(dir);
+                    else if (mods == MODKEY)       cycle_focus(dir);
+                }
+                break;
+            }
 
             /* Canvas navigation is deliberately core-X11: a left drag on
                the root pans the camera, and Mod+Ctrl+LMB does the same over
@@ -1215,11 +1456,22 @@ int main(void) {
                     XAllowEvents(dpy, ReplayPointer, CurrentTime);
                 }
             }
+
+            /* Any plain left hold that we handed back to a client may turn
+               into a drag-and-drop, and once it does the source owns the
+               pointer and we stop hearing about it. Start following it now;
+               dragpan_tick() sorts out whether it ever becomes a pan, and
+               gives up as soon as the button is released. */
+            if (!pan_active && !drag_mode && ev.xbutton.button == Button1)
+                dragpan_arm();
             break;
         }
 
         /* ── End drag ────────────────────────────────────────────────── */
         case ButtonRelease:
+            /* Only seen when nothing else had grabbed the pointer; a drag
+               that reached a client ends via dragpan_tick() instead. */
+            if (ev.xbutton.button == Button1) dragpan_disarm();
             if (pan_active) {
                 XUngrabPointer(dpy, CurrentTime);
                 pan_active = 0;
@@ -1368,18 +1620,7 @@ int main(void) {
                     break;
 
                 case CYCLE:
-                    if (trees[curmon][curspace]) {
-                        Node *n = (a.i > 0)
-                            ? nextleaf(foc, curmon, curspace)
-                            : prevleaf(foc, curmon, curspace);
-                        if (n && n != foc) {
-                            setfocus(curmon, n);
-                            if (layout_modes[curmon][curspace] == 1) tile();
-                        }
-                    }
-                    if (layout_modes[curmon][curspace] == 2) {
-                        canvas_center_focus();
-                    }
+                    cycle_focus(a.i);
                     break;
 
                 case QUIT:
@@ -1485,18 +1726,9 @@ int main(void) {
                     }
                     break;
 
-                case VIEW_ADJ: {
-                    int next = curspace + a.i;
-                    if (next >= 0 && next < NSPACE) {
-                        prevspace = curspace;
-                        curspace = next;
-                        update_ewmh_desktop();
-                        update_canvas_grabs();
-                        tile();
-                        focus_switch_target();
-                    }
+                case VIEW_ADJ:
+                    view_adjacent(a.i);
                     break;
-                }
 
                 case SPLITDIR:
                     if (foc && foc->par) {

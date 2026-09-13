@@ -66,6 +66,9 @@ monitors are detected once at startup via Xinerama; connecting or disconnecting 
 * **Mod + Ctrl + left click drag** : move around the canvas
 * **Mod + LMB drag** : move window around the canvas
 * **Mod + RMB drag** : resize window in floating and canvas mode
+* **Mod + held drag near a screen edge** : scroll the canvas while carrying a dragged file or selection
+* **Mod + scroll** : focus next / previous window
+* **Mod + Ctrl + scroll** : switch to next / previous workspace
 * **Mod + PgUp / PgDown** : switch to previous / next workspace
 * **Mod + comma / period** : move focus to the previous / next monitor
 * **Mod + Shift + comma / period** : move the focused window to the previous / next monitor

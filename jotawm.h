@@ -12,6 +12,18 @@
 #define STAGE_GAP_MASTER   32     /* horizontal gap between the left stack and the master window */
 #define STAGE_STACK_W_PCT  0.15f  /* stack width as a percentage of total screen width */
 
+/* canvas panning while dragging something out of a client (a file from a
+   file manager, a selection from a browser): hold the drag near a monitor
+   edge and the canvas scrolls that way, so the window being aimed at can be
+   brought under the cursor without dropping what is being carried. */
+#define DRAGPAN_MARGIN     48     /* px from a monitor edge that starts panning */
+#define DRAGPAN_SPEED      24     /* px per tick right at the edge, ramped down across the margin */
+#define DRAGPAN_TICK_MS    16     /* how often the camera steps while the pointer dwells */
+#define DRAGPAN_NEEDS_MOD  1      /* 1 = also hold MODKEY to pan, 0 = pan on any drag near an edge */
+
+/* MODKEY + wheel cycles focus, MODKEY + CTRL + wheel switches workspace */
+#define SCROLL_CYCLE       1      /* 0 disables both wheel bindings */
+
 /* window rules */
 typedef struct {
     const char *class;
