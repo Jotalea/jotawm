@@ -1377,6 +1377,9 @@ int main(void) {
                             if (layout_modes[curmon][curspace] == 1) tile();
                         }
                     }
+                    if (layout_modes[curmon][curspace] == 2) {
+                        canvas_center_focus();
+                    }
                     break;
 
                 case QUIT:
