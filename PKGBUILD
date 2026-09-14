@@ -1,4 +1,12 @@
 # Maintainer: Jotalea <main@jotalea.com.ar>
+#
+# The keybinds popup is packaged separately, by keybinds/PKGBUILD, rather than
+# as a split package of this pkgbase. A split pkgbase builds every one of its
+# packages in a single makepkg run, which would make a Go toolchain a
+# makedepend of every jotawm build — including the ones that only touch the C
+# window manager. Keeping it separate means Go is only pulled in when the popup
+# itself is built.
+
 pkgname=jotawm-git
 pkgver=2026.04.02.r0
 pkgrel=1
@@ -8,6 +16,7 @@ url="https://github.com/jotalea/jotawm"
 license=('BSD-3-Clause')
 depends=('libx11' 'libxinerama')
 makedepends=('git')
+optdepends=('jotawm-keybinds-git: on-screen keybind cheat-sheet')
 provides=('jotawm' 'jotawm-session')
 conflicts=('jotawm')
 source=("git+file://${startdir}")

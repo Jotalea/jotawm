@@ -45,7 +45,9 @@ wm
 *.pdb
 
 # Kernel Module Compile Results
-*.mod*
+*.mod
+*.mod.c
+*.mod.o
 *.cmd
 .tmp_versions/
 modules.order
@@ -81,3 +83,8 @@ jotawm-session
 *.changes
 *.dsc
 /debian-build/
+
+# Go module metadata is source, not build output. The kernel-module patterns
+# above used to match go.mod, which broke any build from a fresh clone.
+!keybinds/go.mod
+!keybinds/go.sum
