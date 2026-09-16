@@ -61,6 +61,11 @@ static const char *scrcpyd[] = { "/bin/sh", "-c",
     "maim | xclip -selection clipboard -t image/png", NULL };
 static const char *browcmd[] = { "firefox", NULL };
 static const char *filecmd[] = { "dolphin", NULL };
+static const char *keyscmd[] = { "jotawm-keybinds", NULL };
+/* the wallpaper picker is a rofi custom mode, so it needs a shell to expand
+ * $HOME -- exec'ing rofi directly would pass the path through unexpanded. */
+static const char *wallcmd[] = { "/bin/sh", "-c",
+    "rofi -show wall -modi \"wall:$HOME/.jotalea/scripts/wallpaper.sh\"", NULL };
 
 #define WS(n)                                           \
         { MODKEY,         XK_##n, VIEW, {.i = n-1} },  \
@@ -82,6 +87,8 @@ static Key keys[] = {
         { 0,                XK_Print,  EXEC,     {.v = scrscmd}  },
         { MODKEY|SHTKEY,    XK_s,      EXEC,     {.v = scrseln}  },
         { MODKEY,           XK_s,      EXEC,     {.v = scrcpyd}  },
+        { MODKEY,           XK_comma,  EXEC,     {.v = keyscmd}  },
+        { MODKEY|SHTKEY,    XK_w,      EXEC,     {.v = wallcmd}  },
 
         /* focus cycling */
         { MODKEY,           XK_Left,   CYCLE,    {.i = +1}       },
@@ -117,9 +124,12 @@ static Key keys[] = {
         { MODKEY,           XK_c,      CENTER_CANVAS, {0}         },
         { MODKEY,           XK_Home,   CANVAS_HOME,   {0}         },
 
-        /* move focus / windows across monitors */
-        { MODKEY,           XK_comma,  FOCUSMON, {.i = -1}        },
-        { MODKEY,           XK_period, FOCUSMON, {.i = +1}        },
+        /* move focus / windows across monitors
+         * focus moved to MODKEY|ALTKEY because MODKEY + comma now opens the
+         * keybind cheat-sheet; the pair is kept together so comma/period stay
+         * symmetric. */
+        { MODKEY|ALTKEY,    XK_comma,  FOCUSMON, {.i = -1}        },
+        { MODKEY|ALTKEY,    XK_period, FOCUSMON, {.i = +1}        },
         { MODKEY|SHTKEY,    XK_comma,  SENDMON,  {.i = -1}        },
         { MODKEY|SHTKEY,    XK_period, SENDMON,  {.i = +1}        },
 

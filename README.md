@@ -48,6 +48,7 @@ monitors are detected once at startup via Xinerama; connecting or disconnecting 
 * **Mod + e** : spawn file explorer
 * **Mod + b** : spawn web browser
 * **Mod + Space** : spawn application menu
+* **Mod + comma** : show this keybind cheat-sheet
 * **Mod + kLeft / kRight** : focus next / previous window
 * **Mod + Shift + kLeft / kRight** : move focused window left / right
 * **Mod + Alt + kLeft / kRight** : shrink / expand the focused window
@@ -61,6 +62,7 @@ monitors are detected once at startup via Xinerama; connecting or disconnecting 
 * **PrntScr** : take a fullscreen screenshot and save it to ~/Pictures/
 * **Mod + v** : toggle split direction (horizontal/vertical)
 * **Mod + w** : toggle floating state for the focused window
+* **Mod + Shift + w** : open the wallpaper picker
 * **Mod + m** : toggle macOS stage manager
 * **Mod + g** : toggle canvas mode for the current workspace
 * **Mod + Ctrl + left click drag** : move around the canvas
@@ -70,7 +72,7 @@ monitors are detected once at startup via Xinerama; connecting or disconnecting 
 * **Mod + scroll** : focus next / previous window
 * **Mod + Ctrl + scroll** : switch to next / previous workspace
 * **Mod + PgUp / PgDown** : switch to previous / next workspace
-* **Mod + comma / period** : move focus to the previous / next monitor
+* **Mod + Alt + comma / period** : move focus to the previous / next monitor
 * **Mod + Shift + comma / period** : move the focused window to the previous / next monitor
 * **XF86AudioRaiseVolume / LowerVolume** : increase / decrease volume (pactl)
 * **XF86MonBrightnessUp / Down** : increase / decrease brightness
@@ -110,7 +112,7 @@ in this mode, windows are floating in a scrollable 2d canvas.
 
 each monitor keeps its own tiling tree per workspace. switching workspaces (**Mod + [1-9]**, **Mod + PgUp/PgDown**) changes what every monitor shows at once, since a workspace number is shared across all of them -- but each monitor's content for that workspace is independent, the same way Windows' virtual desktops work when a display isn't set to "show windows on all displays".
 
-after a workspace switch, keyboard focus goes to whatever is under the cursor; if there's nothing there, it goes to the nearest window, even on another monitor; if there's nothing anywhere, nothing is focused. the cursor itself never moves on a workspace switch -- only **Mod + comma/period** warps it, since it also has to hand focus to a different monitor.
+after a workspace switch, keyboard focus goes to whatever is under the cursor; if there's nothing there, it goes to the nearest window, even on another monitor; if there's nothing anywhere, nothing is focused. the cursor itself never moves on a workspace switch -- only **Mod + Alt + comma/period** warps it, since it also has to hand focus to a different monitor.
 
 dragging a floating window across a monitor's edge reassigns it to that monitor once you let go of it (canvas mode is the exception: each monitor's canvas is its own independent coordinate space, so a canvas window can't currently be dragged across monitors -- send it with **Mod + Shift + comma/period** instead).
 
