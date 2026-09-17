@@ -15,6 +15,8 @@ $(BIN): readme_embed.md *.go go.mod
 
 clean:
 	rm -f $(BIN)
+	rm -rf pkg/ src/
+	rm -f *.pkg.tar.zst
 
 install: all
 	install -d $(DESTDIR)$(PREFIX)/bin
