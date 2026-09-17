@@ -88,3 +88,4 @@ jotawm-session
 # above used to match go.mod, which broke any build from a fresh clone.
 !keybinds/go.mod
 !keybinds/go.sum
+keybinds/pkg/*
