@@ -48,6 +48,7 @@ static void tilenode(Node *n, int x, int y, int w, int h, int x_offset, int edge
 static void tile(void);
 static void setfocus(int m, Node *n);
 static void update_ewmh_active(Window w);
+static void update_ewmh_client_list(void);
 static void detach(int m, int s, Node *n);
 static void attach(int m, int s, Node *leaf);
 static Node *findleaf(Node *n, Window w);
@@ -83,6 +84,9 @@ static int scrx, scry, topgap;
 static Atom net_wm_state, net_wm_state_full;
 static Atom net_wm_window_type, net_wm_window_type_dialog;
 static Atom net_active_window;
+static Atom net_current_desktop, net_client_list;
+static Atom net_supporting_wm_check, net_wm_name, utf8_string;
+static Window wmcheckwin;
 static int layout_modes[MAXMONITOR][NSPACE] = {{0}}; /* 0 = BSP, 1 = stage manager, 2 = 2D canvas */
 static int canvas_prev_modes[MAXMONITOR][NSPACE] = {{0}};
 static int canvas_vx[MAXMONITOR][NSPACE] = {{0}};
@@ -674,6 +678,7 @@ static void tile(void) {
     XSetInputFocus(dpy, f ? f->win : root, RevertToPointerRoot, CurrentTime);
     if (f) XRaiseWindow(dpy, f->win);
     update_ewmh_active(f ? f->win : None);
+    update_ewmh_client_list();
 
     if (f && f->isfull && barwin[curmon]) {
         XRaiseWindow(dpy, edgewin[curmon]);
@@ -804,14 +809,39 @@ static void fixtree(void) {
 /* ── Extended Window Manager Hints ──────────────────────────────────────── */
 
 static void update_ewmh_desktop(void) {
-    Atom net_curr = XInternAtom(dpy, "_NET_CURRENT_DESKTOP", False);
+    static long published = -1;
+    if (published == curspace) return;
+    published = curspace;
+
     unsigned long data = curspace;
-    XChangeProperty(dpy, root, net_curr, XA_CARDINAL, 32, PropModeReplace, (unsigned char *)&data, 1);
+    XChangeProperty(dpy, root, net_current_desktop, XA_CARDINAL, 32, PropModeReplace, (unsigned char *)&data, 1);
 }
 
 static void update_ewmh_active(Window w) {
+    static Window published = ~0UL;
+    if (published == w) return;
+    published = w;
+
     XChangeProperty(dpy, root, net_active_window, XA_WINDOW, 32,
         PropModeReplace, (unsigned char *)&w, 1);
+}
+
+static void update_ewmh_client_list(void) {
+    static Window published[1024];
+    static int npublished = -1;
+
+    Window buf[NELEM(published)];
+    int n = 0;
+    for (int m = 0; m < nmon; m++)
+        for (int s = 0; s < NSPACE; s++)
+            n = collect_wins(trees[m][s], buf, (int)NELEM(buf), n);
+
+    if (n == npublished && memcmp(buf, published, n * sizeof(*buf)) == 0) return;
+    memcpy(published, buf, n * sizeof(*buf));
+    npublished = n;
+
+    XChangeProperty(dpy, root, net_client_list, XA_WINDOW, 32,
+        PropModeReplace, (unsigned char *)buf, n);
 }
 
 /* ── Grab keys ──────────────────────────────────────────────────────────── */
@@ -1051,23 +1081,38 @@ int main(void) {
     net_wm_window_type = XInternAtom(dpy, "_NET_WM_WINDOW_TYPE", False);
     net_wm_window_type_dialog = XInternAtom(dpy, "_NET_WM_WINDOW_TYPE_DIALOG", False);
     net_active_window = XInternAtom(dpy, "_NET_ACTIVE_WINDOW", False);
+    net_current_desktop = XInternAtom(dpy, "_NET_CURRENT_DESKTOP", False);
+    net_client_list = XInternAtom(dpy, "_NET_CLIENT_LIST", False);
+    net_supporting_wm_check = XInternAtom(dpy, "_NET_SUPPORTING_WM_CHECK", False);
+    net_wm_name = XInternAtom(dpy, "_NET_WM_NAME", False);
+    utf8_string = XInternAtom(dpy, "UTF8_STRING", False);
     xdnd_selection = XInternAtom(dpy, "XdndSelection", False);
 
     Atom net_supported = XInternAtom(dpy, "_NET_SUPPORTED", False);
     Atom net_desks      = XInternAtom(dpy, "_NET_NUMBER_OF_DESKTOPS", False);
-    Atom net_curr       = XInternAtom(dpy, "_NET_CURRENT_DESKTOP", False);
     Atom supported[] = {
-        net_supported, net_desks, net_curr, net_active_window,
+        net_supported, net_desks, net_current_desktop, net_active_window,
+        net_client_list, net_supporting_wm_check, net_wm_name,
         net_wm_state, net_wm_state_full,
         net_wm_window_type, net_wm_window_type_dialog,
     };
     XChangeProperty(dpy, root, net_supported, XA_ATOM, 32, PropModeReplace,
         (unsigned char *)supported, NELEM(supported));
 
+    wmcheckwin = XCreateWindow(dpy, root, -100, -100, 1, 1, 0, 0,
+        InputOnly, CopyFromParent, 0, NULL);
+    XChangeProperty(dpy, wmcheckwin, net_supporting_wm_check, XA_WINDOW, 32,
+        PropModeReplace, (unsigned char *)&wmcheckwin, 1);
+    XChangeProperty(dpy, wmcheckwin, net_wm_name, utf8_string, 8,
+        PropModeReplace, (unsigned char *)"jotawm", 6);
+    XChangeProperty(dpy, root, net_supporting_wm_check, XA_WINDOW, 32,
+        PropModeReplace, (unsigned char *)&wmcheckwin, 1);
+
     unsigned long ndesks = NSPACE;
     XChangeProperty(dpy, root, net_desks, XA_CARDINAL, 32, PropModeReplace, (unsigned char *)&ndesks, 1);
     update_ewmh_desktop();
     update_ewmh_active(None);
+    update_ewmh_client_list();
 
     for (int m = 0; m < nmon; m++) {
         if (!monitor_has_bar(m)) continue;
