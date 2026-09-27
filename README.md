@@ -30,6 +30,21 @@ make clean
 
 by default, the binary is installed to `/usr/bin/jotawm`.
 
+## hardware requirements
+
+### jotawm
+
+jotawm itself requires at least 3 megabytes of memory to function, 16 megabytes being my recommendation.
+add the requirements to run an X session (roughly 80 megabytes of memory, and the minimum approximates 128 megabytes.
+
+### jotacomp
+
+i **strongly recommend** using jotawm alongside jotacomp
+
+### jotarchy
+
+the entire jotarchy desktop, with a status bar, the jotacompositor, this window manager, and a few other things, requires at least 300 megabytes to function. for graphic effects, a graphics card or integrated GPU with support for at least OpenGL 3 is required. more info on the [jotarchy website](https://jotalea.com.ar/misc/jotarchy/index.html)
+
 ## configuration
 
 configuration is performed entirely at compile time by editing `jotawm.h`.
