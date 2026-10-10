@@ -826,6 +826,32 @@ static void update_ewmh_active(Window w) {
         PropModeReplace, (unsigned char *)&w, 1);
 }
 
+/* Shared by the FULLSCR keybind and _NET_WM_STATE client requests. The
+   property is always rewritten, even on refusal, so clients waiting for a
+   PropertyNotify (GTK, Qt) get an answer instead of hanging. */
+static void setfullscreen(int m, int s, Node *n, int full) {
+    if (layout_modes[m][s] == 2) full = 0;
+    n->isfull = full;
+
+    if (full)
+        XChangeProperty(dpy, n->win, net_wm_state, XA_ATOM, 32, PropModeReplace, (unsigned char*)&net_wm_state_full, 1);
+    else
+        XChangeProperty(dpy, n->win, net_wm_state, XA_ATOM, 32, PropModeReplace, (unsigned char*)0, 0);
+
+    if (m != curmon || s != curspace) return;
+    if (!barwin[m]) find_bar();
+    if (barwin[m]) {
+        if (full) {
+            XMapRaised(dpy, edgewin[m]);
+            XLowerWindow(dpy, barwin[m]);
+        } else {
+            XUnmapWindow(dpy, edgewin[m]);
+            XRaiseWindow(dpy, barwin[m]);
+        }
+    }
+    tile();
+}
+
 static void update_ewmh_client_list(void) {
     static Window published[1024];
     static int npublished = -1;
@@ -1623,6 +1649,28 @@ int main(void) {
             break;
         }
 
+        /* ── EWMH client requests ────────────────────────────────────── */
+        /* We advertise _NET_SUPPORTING_WM_CHECK, so GTK/Qt now route
+           fullscreen through the WM instead of handling it themselves. */
+        case ClientMessage: {
+            XClientMessageEvent *cm = &ev.xclient;
+            if (cm->message_type != net_wm_state || cm->format != 32) break;
+            if ((Atom)cm->data.l[1] != net_wm_state_full &&
+                (Atom)cm->data.l[2] != net_wm_state_full) break;
+
+            for (int m = 0; m < nmon; m++)
+                for (int s = 0; s < NSPACE; s++) {
+                    Node *n = findleaf(trees[m][s], cm->window);
+                    if (!n) continue;
+                    long action = cm->data.l[0];  /* 0 remove, 1 add, 2 toggle */
+                    int full = action == 2 ? !n->isfull : action == 1;
+                    setfullscreen(m, s, n, full);
+                    goto clientmessage_done;
+                }
+        clientmessage_done:
+            break;
+        }
+
         /* ── Handle lost keys ────────────────────────────────────────── */
         case MappingNotify:
             XRefreshKeyboardMapping(&ev.xmapping);
@@ -1679,25 +1727,7 @@ int main(void) {
 
                 case FULLSCR:
                     if (layout_modes[curmon][curspace] == 2) break;
-                    if (foc) {
-                        foc->isfull ^= 1;
-                        if (!barwin[curmon]) find_bar();
-
-                        if (foc->isfull) {
-                            XChangeProperty(dpy, foc->win, net_wm_state, XA_ATOM, 32, PropModeReplace, (unsigned char*)&net_wm_state_full, 1);
-                            if (barwin[curmon]) {
-                                XMapRaised(dpy, edgewin[curmon]);
-                                XLowerWindow(dpy, barwin[curmon]);
-                            }
-                        } else {
-                            XChangeProperty(dpy, foc->win, net_wm_state, XA_ATOM, 32, PropModeReplace, (unsigned char*)0, 0);
-                            if (barwin[curmon]) {
-                                XUnmapWindow(dpy, edgewin[curmon]);
-                                XRaiseWindow(dpy, barwin[curmon]);
-                            }
-                        }
-                        tile();
-                    }
+                    if (foc) setfullscreen(curmon, curspace, foc, !foc->isfull);
                     break;
 
                 case FLOAT:
