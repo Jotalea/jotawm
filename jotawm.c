@@ -50,6 +50,7 @@ static void tilenode(Node *n, int x, int y, int w, int h, int x_offset, int edge
 static void tile(void);
 static void setfocus(int m, Node *n);
 static void update_ewmh_active(Window w);
+static void focusnone(void);
 static void update_ewmh_client_list(void);
 static void detach(int m, int s, Node *n);
 static void attach(int m, int s, Node *leaf);
@@ -83,12 +84,12 @@ static int curmon = 0;
 /* current-monitor context: refreshed by use_monitor() before any geometry
    math, mirroring how curspace already drives implicit array access below */
 static int scrx, scry, topgap;
-static Atom net_wm_state, net_wm_state_full;
+static Atom net_wm_state, net_wm_state_full, wm_state;
 static Atom net_wm_window_type, net_wm_window_type_dialog;
 static Atom net_active_window;
 static Atom net_current_desktop, net_client_list, net_wm_desktop;
 static Atom net_supporting_wm_check, net_wm_name, utf8_string;
-static Window wmcheckwin;
+static Window wmcheckwin, nofocuswin;
 static int layout_modes[MAXMONITOR][NSPACE] = {{0}}; /* 0 = BSP, 1 = stage manager, 2 = 2D canvas */
 static int canvas_prev_modes[MAXMONITOR][NSPACE] = {{0}};
 static int canvas_vx[MAXMONITOR][NSPACE] = {{0}};
@@ -677,9 +678,13 @@ static void tile(void) {
 
     use_monitor(curmon);
     Node *f = focus[curmon][curspace];
-    XSetInputFocus(dpy, f ? f->win : root, RevertToPointerRoot, CurrentTime);
-    if (f) XRaiseWindow(dpy, f->win);
-    update_ewmh_active(f ? f->win : None);
+    if (f) {
+        XSetInputFocus(dpy, f->win, RevertToPointerRoot, CurrentTime);
+        XRaiseWindow(dpy, f->win);
+        update_ewmh_active(f->win);
+    } else {
+        focusnone();
+    }
     update_ewmh_client_list();
 
     if (f && f->isfull && barwin[curmon]) {
@@ -806,6 +811,24 @@ static void fixtree(void) {
             removed++;
     }
     if (removed) tile();
+}
+
+/* ICCCM WM_STATE: the WM's confirmation that a client is mapped/withdrawn.
+   Wine waits for it after mapping, and until it arrives it ignores every
+   FocusOut ("during WM_STATE change") -- so it never deactivates and keeps
+   acting on raw mouse input while unfocused. */
+static void setclientstate(Window w, long state) {
+    long data[] = { state, None };
+    XChangeProperty(dpy, w, wm_state, wm_state, 32, PropModeReplace,
+        (unsigned char *)data, 2);
+}
+
+/* Focus target for "nothing focused" (empty workspace/monitor). Wine ignores
+   _NET_ACTIVE_WINDOW going to None and stays foreground, so we focus and
+   publish a mapped, untitled, invisible window of our own instead of root. */
+static void focusnone(void) {
+    XSetInputFocus(dpy, nofocuswin, RevertToPointerRoot, CurrentTime);
+    update_ewmh_active(nofocuswin);
 }
 
 /* ── Extended Window Manager Hints ──────────────────────────────────────── */
@@ -1130,6 +1153,7 @@ int main(void) {
     curmon = 0;
     use_monitor(curmon);
 
+    wm_state = XInternAtom(dpy, "WM_STATE", False);
     net_wm_state = XInternAtom(dpy, "_NET_WM_STATE", False);
     net_wm_state_full = XInternAtom(dpy, "_NET_WM_STATE_FULLSCREEN", False);
     net_wm_window_type = XInternAtom(dpy, "_NET_WM_WINDOW_TYPE", False);
@@ -1165,6 +1189,11 @@ int main(void) {
     XChangeProperty(dpy, root, net_supporting_wm_check, XA_WINDOW, 32,
         PropModeReplace, (unsigned char *)&wmcheckwin, 1);
 
+    XSetWindowAttributes nfa = { .override_redirect = True };
+    nofocuswin = XCreateWindow(dpy, root, -1, -1, 1, 1, 0, 0,
+        InputOnly, CopyFromParent, CWOverrideRedirect, &nfa);
+    XMapWindow(dpy, nofocuswin);
+
     unsigned long ndesks = NSPACE;
     XChangeProperty(dpy, root, net_desks, XA_CARDINAL, 32, PropModeReplace, (unsigned char *)&ndesks, 1);
 
@@ -1174,7 +1203,7 @@ int main(void) {
         namelen += snprintf(names + namelen, sizeof names - namelen, "%d", s + 1) + 1;
     XChangeProperty(dpy, root, net_desk_names, utf8_string, 8, PropModeReplace, (unsigned char *)names, namelen);
     update_ewmh_desktop();
-    update_ewmh_active(None);
+    focusnone();
     update_ewmh_client_list();
 
     for (int m = 0; m < nmon; m++) {
@@ -1246,7 +1275,7 @@ int main(void) {
             for (int m = 0; m < nmon && !already; m++)
                 for (int s = 0; s < NSPACE && !already; s++)
                     already = (findleaf(trees[m][s], w) != NULL);
-            if (already) { XMapWindow(dpy, w); break; }
+            if (already) { setclientstate(w, NormalState); XMapWindow(dpy, w); break; }
 
             /* New windows attach to whichever monitor the pointer is over */
             {
@@ -1345,6 +1374,7 @@ int main(void) {
             attach(curmon, curspace, leaf);
             update_canvas_grabs();
             tile();
+            setclientstate(w, NormalState);
             XMapWindow(dpy, w);
             setfocus(curmon, leaf);
             break;
@@ -1365,7 +1395,10 @@ int main(void) {
                already unmapped for real, so it's safely ignored here --
                jotawm never leaves a managed leaf mapped-but-hidden on its
                own, so there's nothing left to do for it by that point. */
-            if (!ev.xunmap.send_event && rmwin(ev.xunmap.window)) tile();
+            if (!ev.xunmap.send_event && rmwin(ev.xunmap.window)) {
+                setclientstate(ev.xunmap.window, WithdrawnState);
+                tile();
+            }
             break;
 
         /* ── Apps requesting geometry ────────────────────────────────── */
@@ -1897,8 +1930,7 @@ int main(void) {
                             setfocus(target, focus[target][curspace]);
                         } else {
                             use_monitor(target);
-                            XSetInputFocus(dpy, root, RevertToPointerRoot, CurrentTime);
-                            update_ewmh_active(None);
+                            focusnone();
                         }
                     }
                     break;
