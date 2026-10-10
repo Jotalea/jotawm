@@ -1,5 +1,6 @@
 #include <err.h>
 #include <signal.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/select.h>
@@ -34,6 +35,7 @@ struct Node {
     int x, y, w, h;     /* cached geometry                          */
     int fx, fy, fw, fh; /* floating geometry                        */
     int cx, cy, cw, ch; /* canvas-space geometry                    */
+    int    ewmhdesk;    /* published _NET_WM_DESKTOP + 1, 0 = none  */
 };
 
 /* ── Forward declarations ───────────────────────────────────────────────── */
@@ -84,7 +86,7 @@ static int scrx, scry, topgap;
 static Atom net_wm_state, net_wm_state_full;
 static Atom net_wm_window_type, net_wm_window_type_dialog;
 static Atom net_active_window;
-static Atom net_current_desktop, net_client_list;
+static Atom net_current_desktop, net_client_list, net_wm_desktop;
 static Atom net_supporting_wm_check, net_wm_name, utf8_string;
 static Window wmcheckwin;
 static int layout_modes[MAXMONITOR][NSPACE] = {{0}}; /* 0 = BSP, 1 = stage manager, 2 = 2D canvas */
@@ -852,7 +854,28 @@ static void setfullscreen(int m, int s, Node *n, int full) {
     tile();
 }
 
+/* _NET_WM_DESKTOP on every managed window, so pagers (polybar xworkspaces)
+   can tell occupied workspaces from empty ones. */
+static void publish_desktops(Node *n, int s) {
+    if (!n) return;
+    if (!n->leaf) {
+        publish_desktops(n->a, s);
+        publish_desktops(n->b, s);
+        return;
+    }
+    if (n->ewmhdesk == s + 1) return;
+    n->ewmhdesk = s + 1;
+
+    unsigned long data = s;
+    XChangeProperty(dpy, n->win, net_wm_desktop, XA_CARDINAL, 32,
+        PropModeReplace, (unsigned char *)&data, 1);
+}
+
 static void update_ewmh_client_list(void) {
+    for (int m = 0; m < nmon; m++)
+        for (int s = 0; s < NSPACE; s++)
+            publish_desktops(trees[m][s], s);
+
     static Window published[1024];
     static int npublished = -1;
 
@@ -932,18 +955,23 @@ static void cycle_focus(int dir) {
     }
 }
 
+static void view(int s) {
+    if (s < 0 || s >= NSPACE || s == curspace) return;
+
+    prevspace = curspace;
+    curspace = s;
+    update_ewmh_desktop();
+    update_canvas_grabs();
+    tile();
+    focus_switch_target();
+}
+
 static void view_adjacent(int delta) {
     int next = curspace + delta;
     if (next < 0 || next >= NSPACE) return;
 
     use_monitor(curmon);
-
-    prevspace = curspace;
-    curspace = next;
-    update_ewmh_desktop();
-    update_canvas_grabs();
-    tile();
-    focus_switch_target();
+    view(next);
 }
 
 /* ── Drag-and-drop canvas navigation ─────────────────────────────────────
@@ -1109,6 +1137,7 @@ int main(void) {
     net_active_window = XInternAtom(dpy, "_NET_ACTIVE_WINDOW", False);
     net_current_desktop = XInternAtom(dpy, "_NET_CURRENT_DESKTOP", False);
     net_client_list = XInternAtom(dpy, "_NET_CLIENT_LIST", False);
+    net_wm_desktop = XInternAtom(dpy, "_NET_WM_DESKTOP", False);
     net_supporting_wm_check = XInternAtom(dpy, "_NET_SUPPORTING_WM_CHECK", False);
     net_wm_name = XInternAtom(dpy, "_NET_WM_NAME", False);
     utf8_string = XInternAtom(dpy, "UTF8_STRING", False);
@@ -1116,8 +1145,10 @@ int main(void) {
 
     Atom net_supported = XInternAtom(dpy, "_NET_SUPPORTED", False);
     Atom net_desks      = XInternAtom(dpy, "_NET_NUMBER_OF_DESKTOPS", False);
+    Atom net_desk_names = XInternAtom(dpy, "_NET_DESKTOP_NAMES", False);
     Atom supported[] = {
         net_supported, net_desks, net_current_desktop, net_active_window,
+        net_desk_names, net_wm_desktop,
         net_client_list, net_supporting_wm_check, net_wm_name,
         net_wm_state, net_wm_state_full,
         net_wm_window_type, net_wm_window_type_dialog,
@@ -1136,6 +1167,12 @@ int main(void) {
 
     unsigned long ndesks = NSPACE;
     XChangeProperty(dpy, root, net_desks, XA_CARDINAL, 32, PropModeReplace, (unsigned char *)&ndesks, 1);
+
+    char names[NSPACE * 3];  /* "1\0" ... "9\0" */
+    int namelen = 0;
+    for (int s = 0; s < NSPACE; s++)
+        namelen += snprintf(names + namelen, sizeof names - namelen, "%d", s + 1) + 1;
+    XChangeProperty(dpy, root, net_desk_names, utf8_string, 8, PropModeReplace, (unsigned char *)names, namelen);
     update_ewmh_desktop();
     update_ewmh_active(None);
     update_ewmh_client_list();
@@ -1654,7 +1691,15 @@ int main(void) {
            fullscreen through the WM instead of handling it themselves. */
         case ClientMessage: {
             XClientMessageEvent *cm = &ev.xclient;
-            if (cm->message_type != net_wm_state || cm->format != 32) break;
+            if (cm->format != 32) break;
+
+            /* pager clicks/scrolls, e.g. polybar xworkspaces */
+            if (cm->message_type == net_current_desktop) {
+                view((int)cm->data.l[0]);
+                break;
+            }
+
+            if (cm->message_type != net_wm_state) break;
             if ((Atom)cm->data.l[1] != net_wm_state_full &&
                 (Atom)cm->data.l[2] != net_wm_state_full) break;
 
@@ -1702,14 +1747,7 @@ int main(void) {
                     break;
 
                 case VIEW:
-                    if (a.i >= 0 && a.i < NSPACE && a.i != curspace) {
-                        prevspace = curspace;
-                        curspace = a.i;
-                        update_ewmh_desktop();
-                        update_canvas_grabs();
-                        tile();
-                        focus_switch_target();
-                    }
+                    view(a.i);
                     break;
 
                 case CYCLE:
