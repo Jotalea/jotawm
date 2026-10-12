@@ -56,9 +56,11 @@ static const char *menucmd[] = { "rofi", "-show", "drun", NULL };
 static const char *scrscmd[] = { "/bin/sh", "-c",
     "maim ~/Pictures/$(date +%s).png", NULL };
 static const char *scrseln[] = { "/bin/sh", "-c",
-    "maim --hidecursor --select | xclip -selection clipboard -t image/png", NULL };
+    "f=$(mktemp --suffix=.png) && maim --hidecursor --select \"$f\" && "
+    "xclip -selection clipboard -t image/png -i \"$f\"; rm -f \"$f\"", NULL };
 static const char *scrcpyd[] = { "/bin/sh", "-c",
-    "maim | xclip -selection clipboard -t image/png", NULL };
+    "f=$(mktemp --suffix=.png) && maim \"$f\" && "
+    "xclip -selection clipboard -t image/png -i \"$f\"; rm -f \"$f\"", NULL };
 static const char *browcmd[] = { "firefox", NULL };
 static const char *filecmd[] = { "dolphin", NULL };
 static const char *keyscmd[] = { "jotawm-keybinds", NULL };
