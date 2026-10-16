@@ -744,6 +744,23 @@ static void setfocus(int m, Node *n) {
     XSync(dpy, False);
 }
 
+/* Make m the current monitor *and* hand it the keyboard. curmon used to be
+   flipped on its own when the pointer crossed onto another monitor's
+   already-remembered window (or a float, or bare root), leaving X focus on
+   the previous monitor until the next tile() silently yanked it over. The
+   two must always move together. */
+static void switch_monitor(int m) {
+    if (m == curmon) return;
+    curmon = m;
+    Node *f = focus[m][curspace];
+    if (f) {
+        setfocus(m, f);
+    } else {
+        use_monitor(m);
+        focusnone();
+    }
+}
+
 /* Resolve focus after a workspace switch: whatever is directly under the
    cursor (on whichever monitor that is), else the nearest leaf to the
    cursor on curspace across every monitor, else nothing at all. The
@@ -1679,7 +1696,7 @@ int main(void) {
                     if (!n->isfloat && n != focus[m][curspace]) {
                         setfocus(m, n);
                     } else {
-                        curmon = m;
+                        switch_monitor(m);
                     }
                 }
             }
@@ -1700,7 +1717,8 @@ int main(void) {
                 if (n) m = mi;
             }
             if (m < 0) m = monitor_at(ev.xbutton.x_root, ev.xbutton.y_root);
-            curmon = m;
+            if (n) curmon = m;          /* the branches below setfocus() the leaf */
+            else   switch_monitor(m);   /* bare root/unmanaged: still move the keyboard */
 
             /* Wheel bindings. X11 reports the wheel as buttons 4/5, so a
                wheel event has to be taken out of the chain entirely before
