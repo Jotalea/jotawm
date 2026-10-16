@@ -188,6 +188,21 @@ static void virtual_bounds(int *x0, int *y0, int *x1, int *y1) {
     }
 }
 
+/* X position for a window parked on a non-current workspace. Workspaces
+   slide sideways by the virtual desktop's width, which is enough for a
+   window that sits inside its monitor -- but a float dragged off the edge
+   or a canvas window beyond the camera can be shifted right back onto a
+   visible area, so shove it fully past the desktop in the slide's direction. */
+static int park_x(int x, int w, int x_offset) {
+    if (!x_offset) return x;
+    int x0, y0, x1, y1;
+    virtual_bounds(&x0, &y0, &x1, &y1);
+    x += x_offset;
+    if (x_offset > 0 && x < x1)     return x1;
+    if (x_offset < 0 && x + w > x0) return x0 - w;
+    return x;
+}
+
 /* Which monitor contains the point (px, py)? Falls back to curmon if the
    point lies outside every known monitor rect (shouldn't normally happen
    for a live pointer position, but geometry can be stale mid-drag). */
@@ -424,7 +439,7 @@ static void tilenode(Node *n, int x, int y, int w, int h, int x_offset, int edge
     if (n->leaf) {
         if (n->isfloat) {
             /* fx/fy are absolute root coordinates already */
-            XMoveResizeWindow(dpy, n->win, n->fx + x_offset, n->fy, n->fw, n->fh);
+            XMoveResizeWindow(dpy, n->win, park_x(n->fx, n->fw, x_offset), n->fy, n->fw, n->fh);
             return;
         }
 
@@ -475,7 +490,7 @@ static void place_stage_leaf(Node *n, Node *foc, int *current_y, int master_x, i
             if (n->isfull) {
                 XMoveResizeWindow(dpy, n->win, scrx + x_offset, scry, scrw, disph);
             } else if (n->isfloat) {
-                XMoveResizeWindow(dpy, n->win, n->fx + x_offset, n->fy, n->fw, n->fh);
+                XMoveResizeWindow(dpy, n->win, park_x(n->fx, n->fw, x_offset), n->fy, n->fw, n->fh);
             } else {
                 XMoveResizeWindow(dpy, n->win, master_x, master_y, master_w, master_h);
             }
@@ -578,12 +593,12 @@ static void canvas_place_tree(Node *n, int m, int s, int x_offset) {
         return;
     }
 
-    int x = scrx + n->cx - canvas_vx[m][s] + x_offset;
+    n->w = n->cw > 0 ? n->cw : scrw / 2;
+    n->h = n->ch > 0 ? n->ch : scrh / 2;
+    int x = park_x(scrx + n->cx - canvas_vx[m][s], n->w, x_offset);
     int y = scry + topgap + n->cy - canvas_vy[m][s];
     n->x = x;
     n->y = y;
-    n->w = n->cw > 0 ? n->cw : scrw / 2;
-    n->h = n->ch > 0 ? n->ch : scrh / 2;
     XMoveResizeWindow(dpy, n->win, x, y, n->w, n->h);
 }
 
@@ -637,6 +652,13 @@ static void canvas_home(void) {
 }
 
 static void tile(void) {
+    /* Parked workspaces slide sideways by the width of the whole virtual
+       desktop: a monitor's own width would only carry its windows onto the
+       neighbouring monitor, where they'd show through on another workspace. */
+    int vx0, vy0, vx1, vy1;
+    virtual_bounds(&vx0, &vy0, &vx1, &vy1);
+    int slide = vx1 - vx0;
+
     for (int m = 0; m < nmon; m++) {
         use_monitor(m);
 
@@ -645,7 +667,7 @@ static void tile(void) {
 
             int x_offset = 0;
             if (s != curspace) {
-                x_offset = (s < curspace) ? -scrw : scrw;
+                x_offset = (s < curspace) ? -slide : slide;
             }
 
             if (layout_modes[m][s] == 2) {
