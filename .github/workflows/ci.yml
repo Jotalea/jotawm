@@ -18,7 +18,7 @@ jobs:
           fetch-depth: 0
 
       - name: Install dependencies
-        run: sudo apt-get install -y libx11-dev libxinerama-dev
+        run: sudo apt-get install -y libx11-dev libxinerama-dev libxrandr-dev
 
       - name: Build
         run: make
@@ -55,7 +55,7 @@ jobs:
           fetch-depth: 0
 
       - name: Install build dependencies
-        run: sudo apt-get update && sudo apt-get install -y build-essential dpkg-dev debhelper pkg-config libx11-dev libxinerama-dev
+        run: sudo apt-get update && sudo apt-get install -y build-essential dpkg-dev debhelper pkg-config libx11-dev libxinerama-dev libxrandr-dev
 
       - name: Generate debian/changelog
         run: debian/gen-changelog.sh
@@ -89,7 +89,7 @@ jobs:
             -v "$PWD/pkg-build":/out \
             archlinux:base-devel bash -c '
               set -e
-              pacman -Sy --noconfirm --needed git libx11 libxinerama
+              pacman -Sy --noconfirm --needed git libx11 libxinerama libxrandr
               useradd -m builder
               cp -a /src /home/builder/jotawm
               chown -R builder:builder /home/builder/jotawm

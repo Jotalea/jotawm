@@ -9,7 +9,7 @@ A minimal tiling window manager for X11.
 
 ## dependencies
 
-* Xlib and Xinerama header files
+* Xlib, Xinerama and Xrandr header files
 * a standard C compiler
 * `make`
 
@@ -55,7 +55,7 @@ the default modifier key (`Mod`) is set to `Mod4Mask` (Super/windows key).
 
 the default terminal is `kitty`, and the default menu is `rofi`. make sure these are installed or edit the `termcmd` and `menucmd` arrays to match your preferred software.
 
-monitors are detected once at startup via Xinerama; connecting or disconnecting a display requires restarting `jotawm` to be picked up. `MAXMONITOR` in `jotawm.h` caps how many outputs are tracked, and `BAR_MONITOR` picks which one reserves space for a status bar (an index, or `-1` for every monitor).
+monitors are detected via Xinerama at startup and re-detected whenever RandR reports a change, so plugging a display in (or adding a virtual one with `xrandr --setmonitor`) is picked up live. a monitor that disappears hands its windows to the nearest remaining one. `MAXMONITOR` in `jotawm.h` caps how many outputs are tracked, and `BAR_MONITOR` picks which one reserves space for a status bar (an index, or `-1` for every monitor).
 
 ## keybinds
 
@@ -89,6 +89,7 @@ monitors are detected once at startup via Xinerama; connecting or disconnecting 
 * **Mod + PgUp / PgDown** : switch to previous / next workspace
 * **Mod + Alt + comma / period** : move focus to the previous / next monitor
 * **Mod + Shift + comma / period** : move the focused window to the previous / next monitor
+* **Mod + Shift + m** : re-read the monitor layout (see *multiple monitors*)
 * **XF86AudioRaiseVolume / LowerVolume** : increase / decrease volume (pactl)
 * **XF86MonBrightnessUp / Down** : increase / decrease brightness
 
@@ -130,6 +131,20 @@ each monitor keeps its own tiling tree per workspace. switching workspaces (**Mo
 after a workspace switch, keyboard focus goes to whatever is under the cursor; if there's nothing there, it goes to the nearest window, even on another monitor; if there's nothing anywhere, nothing is focused. the cursor itself never moves on a workspace switch -- only **Mod + Alt + comma/period** warps it, since it also has to hand focus to a different monitor.
 
 dragging a floating window across a monitor's edge reassigns it to that monitor once you let go of it (canvas mode is the exception: each monitor's canvas is its own independent coordinate space, so a canvas window can't currently be dragged across monitors -- send it with **Mod + Shift + comma/period** instead).
+
+### hotplug
+
+plugging a display in or out is picked up live through RandR. a monitor whose rectangle is unchanged keeps its trees and layout modes; the windows of one that disappeared (or changed resolution) are re-tiled onto the nearest remaining monitor.
+
+the X server emits no event for *virtual* monitors (`xrandr --setmonitor` / `--delmonitor`), so after creating one -- say, a 1200x800 region to stream to a tablet over VNC -- tell jotawm to look again, either with **Mod + Shift + m** or, from the script that sets the monitor up, by touching a root window property:
+
+```sh
+xrandr --fb 3120x1080
+xrandr --setmonitor TABLET 1200/200x800/130+1920+0 none
+xprop -root -f _JOTAWM_RESCAN 32c -set _JOTAWM_RESCAN 1
+```
+
+a rescan that finds nothing changed is a no-op.
 
 ## recommended software
 this is software that i personally recommend to use alongside jotawm

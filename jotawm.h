@@ -40,7 +40,7 @@ static Rule rules[] = {
     { "steam_app_",     1 },
 };
 
-enum { EXEC, VIEW, CYCLE, SWAP, SEND, RESIZE, FULLSCR, CLOSE, QUIT, FLOAT, SPLITDIR, VIEW_ADJ, TOGGLE_STAGE, FIXTREE, TOGGLE_CANVAS, CENTER_CANVAS, CANVAS_HOME, FOCUSMON, SENDMON };
+enum { EXEC, VIEW, CYCLE, SWAP, SEND, RESIZE, FULLSCR, CLOSE, QUIT, FLOAT, SPLITDIR, VIEW_ADJ, TOGGLE_STAGE, FIXTREE, TOGGLE_CANVAS, CENTER_CANVAS, CANVAS_HOME, FOCUSMON, SENDMON, RESCAN };
 
 typedef union  { int i; float f; const char **v; } Arg;
 typedef struct { unsigned int mod; KeySym sym; int act; Arg arg; } Key;
@@ -117,6 +117,12 @@ static Key keys[] = {
 
         /* repair: drop any dead/stuck "fake window" leaves and retile */
         { MODKEY|SHTKEY,    XK_r,      FIXTREE,  {0}             },
+
+        /* re-read the monitor layout. physical hotplug is picked up on its
+         * own via RandR, but virtual monitors (xrandr --setmonitor) emit no
+         * event, so this -- or the _JOTAWM_RESCAN root property -- is the
+         * way to tell jotawm about them. */
+        { MODKEY|SHTKEY,    XK_m,      RESCAN,   {0}             },
 
         /* macOS stage manager */
         { MODKEY,           XK_m,      TOGGLE_STAGE, {0}         },

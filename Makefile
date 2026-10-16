@@ -1,10 +1,10 @@
 PREFIX      ?= /usr/local
 CC          ?= cc
 
-X11CFLAGS   := $(shell pkg-config --cflags x11 xinerama 2>/dev/null)
-X11LIBS     := $(shell pkg-config --libs x11 xinerama 2>/dev/null)
+X11CFLAGS   := $(shell pkg-config --cflags x11 xinerama xrandr 2>/dev/null)
+X11LIBS     := $(shell pkg-config --libs x11 xinerama xrandr 2>/dev/null)
 X11CFLAGS   ?= -I/usr/include
-X11LIBS     ?= -L/usr/lib -lX11 -lXinerama
+X11LIBS     ?= -L/usr/lib -lX11 -lXinerama -lXrandr
 
 CFLAGS      += -O2 -Wall -Wextra $(X11CFLAGS)
 LDFLAGS     += $(X11LIBS)

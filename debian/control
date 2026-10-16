@@ -5,7 +5,8 @@ Maintainer: Jotalea <main@jotalea.com.ar>
 Build-Depends: debhelper-compat (= 13),
                pkg-config,
                libx11-dev,
-               libxinerama-dev
+               libxinerama-dev,
+               libxrandr-dev
 Standards-Version: 4.6.2
 Homepage: https://github.com/jotalea/jotawm
 Rules-Requires-Root: no

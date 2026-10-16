@@ -13,6 +13,7 @@
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
 #include <X11/extensions/Xinerama.h>
+#include <X11/extensions/Xrandr.h>
 
 #include "jotawm.h"
 
@@ -80,6 +81,7 @@ typedef struct {
 static Monitor monitors[MAXMONITOR];
 static int nmon = 1;
 static int curmon = 0;
+static int rr_event_base = -1;   /* RandR event offset, -1 when the extension is missing */
 
 /* current-monitor context: refreshed by use_monitor() before any geometry
    math, mirroring how curspace already drives implicit array access below */
@@ -89,6 +91,7 @@ static Atom net_wm_window_type, net_wm_window_type_dialog;
 static Atom net_active_window;
 static Atom net_current_desktop, net_client_list, net_wm_desktop;
 static Atom net_supporting_wm_check, net_wm_name, utf8_string;
+static Atom jotawm_rescan;   /* root property: any change re-reads the monitor layout */
 static Window wmcheckwin, nofocuswin;
 static int layout_modes[MAXMONITOR][NSPACE] = {{0}}; /* 0 = BSP, 1 = stage manager, 2 = 2D canvas */
 static int canvas_prev_modes[MAXMONITOR][NSPACE] = {{0}};
@@ -139,8 +142,10 @@ static void use_monitor(int m) {
     scrh   = disph - topgap;
 }
 
-/* Static detection: queried once at startup. Outputs added or removed at
-   runtime require a jotawm restart to be picked up. */
+/* Snapshot the current output layout into monitors[]/nmon. Called once at
+   startup and again from reconfigure_monitors() whenever RandR reports a
+   change; it only reads geometry, the per-monitor state is reconciled by
+   the caller. */
 static void detect_monitors(void) {
     int n = 0;
     if (XineramaIsActive(dpy)) {
@@ -1107,6 +1112,159 @@ static void dragpan_tick(void) {
     tile();
 }
 
+/* ── Monitor hot reload ─────────────────────────────────────────────────── */
+
+/* One InputOnly strip along the bar edge of every bar-carrying monitor, so
+   a fullscreen window can still reveal the bar by touching the edge. */
+static void create_edgewins(void) {
+    for (int m = 0; m < nmon; m++) {
+        if (!monitor_has_bar(m)) continue;
+        edgewin[m] = XCreateWindow(dpy, root, monitors[m].x,
+            (BAR_POS == 0) ? monitors[m].y : monitors[m].y + monitors[m].h - 1,
+            monitors[m].w, 1, 0, 0, InputOnly, CopyFromParent, 0, NULL);
+        XSelectInput(dpy, edgewin[m], EnterWindowMask);
+    }
+}
+
+static int monitor_eq(const Monitor *a, const Monitor *b) {
+    return a->x == b->x && a->y == b->y && a->w == b->w && a->h == b->h;
+}
+
+/* Index of the monitor whose centre is closest to (px, py). Unlike
+   monitor_at() the point needn't be inside any of them. */
+static int monitor_nearest(int px, int py) {
+    int best = 0;
+    long bestd = -1;
+    for (int m = 0; m < nmon; m++) {
+        long dx = px - (monitors[m].x + monitors[m].w / 2);
+        long dy = py - (monitors[m].y + monitors[m].h / 2);
+        long d = dx * dx + dy * dy;
+        if (bestd < 0 || d < bestd) { bestd = d; best = m; }
+    }
+    return best;
+}
+
+/* Flatten a tree into its leaves, freeing the split nodes on the way down.
+   The leaves come back parentless, ready to be attach()ed elsewhere. */
+static int collect_leaves(Node *n, Node **out, int cap, int count) {
+    if (!n) return count;
+    if (n->leaf) {
+        n->par = NULL;
+        if (count < cap) out[count++] = n;
+        return count;
+    }
+    count = collect_leaves(n->a, out, cap, count);
+    count = collect_leaves(n->b, out, cap, count);
+    free(n);
+    return count;
+}
+
+/* RandR told us the output layout changed. Monitors have no identity beyond
+   their rectangle, so one whose rectangle survived keeps its trees and modes
+   verbatim; one that vanished (or moved/resized) has every window re-attached
+   onto whichever new monitor is nearest to where it used to be. Brand-new
+   monitors start empty, which the rest of the code already handles. */
+static void reconfigure_monitors(void) {
+    Monitor old[MAXMONITOR];
+    int nold = nmon;
+    memcpy(old, monitors, sizeof old);
+
+    Node *otrees[MAXMONITOR][NSPACE], *ofocus[MAXMONITOR][NSPACE];
+    int omodes[MAXMONITOR][NSPACE], oprev[MAXMONITOR][NSPACE];
+    int ovx[MAXMONITOR][NSPACE], ovy[MAXMONITOR][NSPACE];
+    memcpy(otrees, trees, sizeof otrees);
+    memcpy(ofocus, focus, sizeof ofocus);
+    memcpy(omodes, layout_modes, sizeof omodes);
+    memcpy(oprev, canvas_prev_modes, sizeof oprev);
+    memcpy(ovx, canvas_vx, sizeof ovx);
+    memcpy(ovy, canvas_vy, sizeof ovy);
+
+    detect_monitors();
+    fprintf(stderr, "jotawm: rescanned, %d monitor%s:", nmon, nmon == 1 ? "" : "s");
+    for (int m = 0; m < nmon; m++)
+        fprintf(stderr, " %dx%d+%d+%d", monitors[m].w, monitors[m].h, monitors[m].x, monitors[m].y);
+    fputc('\n', stderr);
+
+    memset(trees, 0, sizeof trees);
+    memset(focus, 0, sizeof focus);
+    memset(layout_modes, 0, sizeof layout_modes);
+    memset(canvas_prev_modes, 0, sizeof canvas_prev_modes);
+    memset(canvas_vx, 0, sizeof canvas_vx);
+    memset(canvas_vy, 0, sizeof canvas_vy);
+
+    /* Pass 1: unchanged rectangles keep their slot's state as-is. */
+    int target[MAXMONITOR];
+    int claimed[MAXMONITOR] = {0};
+    for (int om = 0; om < nold; om++) {
+        target[om] = -1;
+        for (int nm = 0; nm < nmon; nm++) {
+            if (claimed[nm] || !monitor_eq(&old[om], &monitors[nm])) continue;
+            target[om] = nm;
+            claimed[nm] = 1;
+            for (int s = 0; s < NSPACE; s++) {
+                trees[nm][s]             = otrees[om][s];
+                focus[nm][s]             = ofocus[om][s];
+                layout_modes[nm][s]      = omodes[om][s];
+                canvas_prev_modes[nm][s] = oprev[om][s];
+                canvas_vx[nm][s]         = ovx[om][s];
+                canvas_vy[nm][s]         = ovy[om][s];
+            }
+            break;
+        }
+    }
+
+    /* Pass 2: orphaned trees are merged into the nearest new monitor. If
+       that monitor is itself new (nobody claimed it in pass 1), it adopts
+       the orphan's modes too -- that is the "same screen, new resolution"
+       case, and the user would expect nothing but the geometry to change. */
+    for (int om = 0; om < nold; om++) {
+        if (target[om] >= 0) continue;
+        int nm = monitor_nearest(old[om].x + old[om].w / 2, old[om].y + old[om].h / 2);
+        int adopt = !claimed[nm];
+        claimed[nm] = 1;
+        for (int s = 0; s < NSPACE; s++) {
+            if (adopt) {
+                layout_modes[nm][s]      = omodes[om][s];
+                canvas_prev_modes[nm][s] = oprev[om][s];
+                canvas_vx[nm][s]         = ovx[om][s];
+                canvas_vy[nm][s]         = ovy[om][s];
+            }
+            /* remember the focused window by id: collect_leaves() frees the
+               split nodes, so no Node pointer into the old tree is safe
+               past it */
+            Window fw = ofocus[om][s] ? ofocus[om][s]->win : None;
+            Node *leaves[1024];
+            int n = collect_leaves(otrees[om][s], leaves, (int)NELEM(leaves), 0);
+            for (int i = 0; i < n; i++) attach(nm, s, leaves[i]);
+            Node *fl = fw != None ? findleaf(trees[nm][s], fw) : NULL;
+            if (fl) focus[nm][s] = fl;
+        }
+    }
+
+    /* Per-monitor X resources: edge strips are tied to a rectangle, so
+       rebuild them; the bar cache is re-discovered lazily by find_bar(). */
+    for (int m = 0; m < nold; m++) {
+        if (edgewin[m]) XDestroyWindow(dpy, edgewin[m]);
+        edgewin[m] = 0;
+    }
+    memset(barwin, 0, sizeof barwin);
+    create_edgewins();
+
+    /* Anything mid-gesture refers to geometry that no longer exists. */
+    if (drag_mode || pan_active) XUngrabPointer(dpy, CurrentTime);
+    drag_mode = 0;
+    drag_node = NULL;
+    pan_active = 0;
+    dragpan_disarm();
+
+    update_canvas_grabs();
+    tile();
+    focus_switch_target();
+
+    Node *f = focus[curmon][curspace];
+    if (f && f->isfull && edgewin[curmon]) XMapRaised(dpy, edgewin[curmon]);
+}
+
 /* Block for the next event, but no longer than timeout_ms. Returns 1 if an
    event was read. Only used while a drag is being followed -- the rest of
    the time the loop sleeps in XNextEvent as before. */
@@ -1166,6 +1324,7 @@ int main(void) {
     net_wm_name = XInternAtom(dpy, "_NET_WM_NAME", False);
     utf8_string = XInternAtom(dpy, "UTF8_STRING", False);
     xdnd_selection = XInternAtom(dpy, "XdndSelection", False);
+    jotawm_rescan = XInternAtom(dpy, "_JOTAWM_RESCAN", False);
 
     Atom net_supported = XInternAtom(dpy, "_NET_SUPPORTED", False);
     Atom net_desks      = XInternAtom(dpy, "_NET_NUMBER_OF_DESKTOPS", False);
@@ -1206,16 +1365,16 @@ int main(void) {
     focusnone();
     update_ewmh_client_list();
 
-    for (int m = 0; m < nmon; m++) {
-        if (!monitor_has_bar(m)) continue;
-        edgewin[m] = XCreateWindow(dpy, root, monitors[m].x,
-            (BAR_POS == 0) ? monitors[m].y : monitors[m].y + monitors[m].h - 1,
-            monitors[m].w, 1, 0, 0, InputOnly, CopyFromParent, 0, NULL);
-        XSelectInput(dpy, edgewin[m], EnterWindowMask);
-    }
+    create_edgewins();
+
+    int rr_error_base;
+    if (XRRQueryExtension(dpy, &rr_event_base, &rr_error_base))
+        XRRSelectInput(dpy, root, RRScreenChangeNotifyMask);
+    else
+        rr_event_base = -1;
 
     XSelectInput(dpy, root,
-        SubstructureRedirectMask | SubstructureNotifyMask |
+        SubstructureRedirectMask | SubstructureNotifyMask | PropertyChangeMask |
         KeyPressMask | ButtonPressMask | ButtonReleaseMask | PointerMotionMask);
 
     /* for (size_t i = 0; i < NELEM(keys); i++) {
@@ -1258,6 +1417,17 @@ int main(void) {
         }
 
         if (dragpan_armed) dragpan_tick();
+
+        /* RandR events live past the core range, so they can't be a case
+           label below. One arrives per output/CRTC/framebuffer change (a
+           plugged-in display, xrandr --output/--fb); reconfiguring is
+           idempotent, so no need to coalesce. Virtual monitors made with
+           --setmonitor are silent -- see PropertyNotify further down. */
+        if (rr_event_base >= 0 && ev.type == rr_event_base + RRScreenChangeNotify) {
+            XRRUpdateConfiguration(&ev);
+            reconfigure_monitors();
+            continue;
+        }
 
         switch (ev.type) {
 
@@ -1749,6 +1919,15 @@ int main(void) {
             break;
         }
 
+        /* ── Script-driven monitor rescan ────────────────────────────────
+           xrandr --setmonitor/--delmonitor fire no RandR event, so a script
+           that sets one up ends with:
+             xprop -root -f _JOTAWM_RESCAN 32c -set _JOTAWM_RESCAN 1   */
+        case PropertyNotify:
+            if (ev.xproperty.window == root && ev.xproperty.atom == jotawm_rescan)
+                reconfigure_monitors();
+            break;
+
         /* ── Handle lost keys ────────────────────────────────────────── */
         case MappingNotify:
             XRefreshKeyboardMapping(&ev.xmapping);
@@ -1917,6 +2096,10 @@ int main(void) {
 
                 case FIXTREE:
                     fixtree();
+                    break;
+
+                case RESCAN:
+                    reconfigure_monitors();
                     break;
 
                 case FOCUSMON:
