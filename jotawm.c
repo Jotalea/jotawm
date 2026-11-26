@@ -222,6 +222,15 @@ static int xerror(Display *d, XErrorEvent *e) {
     return 0;
 }
 
+/* BadAccess here means another WM owns the root */
+static int otherwm = 0;
+
+static int xerror_start(Display *d, XErrorEvent *e) {
+    (void)d;
+    if (e->error_code == BadAccess) otherwm = 1;
+    return 0;
+}
+
 /* ── BSP helpers ────────────────────────────────────────────────────────── */
 
 static Node *mkleaf(Window w) {
@@ -1341,6 +1350,14 @@ int main(void) {
 #endif
 
     root = DefaultRootWindow(dpy);
+
+    /* exit before touching any root property if a WM is already running */
+    XSetErrorHandler(xerror_start);
+    XSelectInput(dpy, root, SubstructureRedirectMask);
+    XSync(dpy, False);
+    if (otherwm) errx(1, "another window manager is already running");
+    XSetErrorHandler(xerror);
+
     Cursor cursor = XCreateFontCursor(dpy, XC_left_ptr);
     XDefineCursor(dpy, root, cursor);
     XSetWindowBackground(dpy, root, ROOT_BG);
