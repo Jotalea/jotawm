@@ -69,6 +69,7 @@ monitors are detected via Xinerama at startup and re-detected whenever RandR rep
 * **Mod + Alt + kLeft / kRight** : shrink / expand the focused window
 * **Mod + f** : toggle fullscreen for the focused window
 * **Mod + q** : kill the focused window
+* **Mod + Shift + r** : repair the layout (drop stuck windows and retile)
 * **Mod + Shift + q** : quit wm
 * **Mod + [1-9]** : switch to workspace N
 * **Mod + Shift + [1-9]**: move focused window to workspace N
@@ -80,8 +81,11 @@ monitors are detected via Xinerama at startup and re-detected whenever RandR rep
 * **Mod + Shift + w** : open the wallpaper picker
 * **Mod + m** : toggle macOS stage manager
 * **Mod + g** : toggle canvas mode for the current workspace
+* **Mod + c** : center the canvas on the focused window
+* **Mod + Home** : return the canvas to its origin
 * **Mod + Ctrl + left click drag** : move around the canvas
-* **Mod + LMB drag** : move window around the canvas
+* **LMB drag on empty desktop** : pan the canvas in canvas mode
+* **Mod + LMB drag** : move window in floating and canvas mode
 * **Mod + RMB drag** : resize window in floating and canvas mode
 * **Mod + held drag near a screen edge** : scroll the canvas while carrying a dragged file or selection
 * **Mod + scroll** : focus next / previous window
