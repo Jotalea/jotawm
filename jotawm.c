@@ -37,6 +37,7 @@ struct Node {
     int fx, fy, fw, fh; /* floating geometry                        */
     int cx, cy, cw, ch; /* canvas-space geometry                    */
     int    ewmhdesk;    /* published _NET_WM_DESKTOP + 1, 0 = none  */
+    int    hidden;      /* client unmapped itself while parked      */
 };
 
 /* ── Forward declarations ───────────────────────────────────────────────── */
@@ -62,6 +63,7 @@ static Node *prevleaf(Node *cur, int m, int s);
 static void canvas_seed_workspace(int m, int s);
 static void canvas_place_tree(Node *n, int m, int s, int x_offset);
 static void update_canvas_grabs(void);
+static void setclientstate(Window w, long state);
 
 /* ── Global state ───────────────────────────────────────────────────────── */
 
@@ -674,6 +676,17 @@ static void canvas_home(void) {
     tile();
 }
 
+/* Map leaves that unmapped themselves while their workspace was parked
+   (see UnmapNotify), now that the workspace is back on screen. */
+static void remap_hidden(Node *n) {
+    if (!n) return;
+    if (!n->leaf) { remap_hidden(n->a); remap_hidden(n->b); return; }
+    if (!n->hidden) return;
+    n->hidden = 0;
+    setclientstate(n->win, NormalState);
+    XMapWindow(dpy, n->win);
+}
+
 static void tile(void) {
     /* Parked workspaces slide sideways by the width of the whole virtual
        desktop: a monitor's own width would only carry its windows onto the
@@ -721,6 +734,7 @@ static void tile(void) {
             }
 
             if (s == curspace) {
+                remap_hidden(trees[m][s]);
                 raise_floats(trees[m][s]);
             }
         }
@@ -855,7 +869,8 @@ static void closewin(Window w) {
 static int collect_wins(Node *n, Window *out, int cap, int count) {
     if (!n || count >= cap) return count;
     if (n->leaf) {
-        out[count++] = n->win;
+        /* hidden leaves are unmapped on purpose, not stale */
+        if (!n->hidden) out[count++] = n->win;
         return count;
     }
     count = collect_wins(n->a, out, cap, count);
@@ -1511,11 +1526,16 @@ int main(void) {
                window we still manage would otherwise insert a duplicate
                leaf -- the classic "empty slot in the BSP tree" symptom.
                Just show it again instead. */
-            int already = 0;
+            Node *already = NULL;
             for (int m = 0; m < nmon && !already; m++)
                 for (int s = 0; s < NSPACE && !already; s++)
-                    already = (findleaf(trees[m][s], w) != NULL);
-            if (already) { setclientstate(w, NormalState); XMapWindow(dpy, w); break; }
+                    already = findleaf(trees[m][s], w);
+            if (already) {
+                already->hidden = 0;
+                setclientstate(w, NormalState);
+                XMapWindow(dpy, w);
+                break;
+            }
 
             /* New windows attach to whichever monitor the pointer is over */
             {
@@ -1625,17 +1645,21 @@ int main(void) {
             if (rmwin(ev.xdestroywindow.window)) tile();
             break;
         case UnmapNotify:
-            /* A real (non-synthetic) UnmapNotify means the window actually
-               left the screen -- the client hid it or is about to destroy
-               it. Plenty of GTK dialogs/popups do this without ever
-               sending DestroyNotify, which used to leave an empty leaf
-               sitting in the tree forever (the "fake window" bug). A
-               *synthetic* UnmapNotify (send_event=1) is just the ICCCM
-               WithdrawnState courtesy message clients send after they've
-               already unmapped for real, so it's safely ignored here --
-               jotawm never leaves a managed leaf mapped-but-hidden on its
-               own, so there's nothing left to do for it by that point. */
-            if (!ev.xunmap.send_event && rmwin(ev.xunmap.window)) {
+            if (ev.xunmap.send_event) break;
+            {
+                Node *n = NULL;
+                int owner_s = -1;
+                for (int m = 0; m < nmon && !n; m++)
+                    for (int s = 0; s < NSPACE && !n; s++)
+                        if ((n = findleaf(trees[m][s], ev.xunmap.window)))
+                            owner_s = s;
+                if (n && owner_s != curspace) {
+                    n->hidden = 1;
+                    setclientstate(ev.xunmap.window, IconicState);
+                    break;
+                }
+            }
+            if (rmwin(ev.xunmap.window)) {
                 setclientstate(ev.xunmap.window, WithdrawnState);
                 tile();
             }
