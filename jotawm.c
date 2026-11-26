@@ -441,6 +441,20 @@ static void find_bar(void) {
     }
 }
 
+static void send_configure(Window w, int x, int y, int cw, int ch) {
+    XConfigureEvent ce = {
+        .type = ConfigureNotify, .display = dpy, .event = w, .window = w,
+        .x = x, .y = y, .width = cw, .height = ch,
+        .border_width = 0, .above = None, .override_redirect = False,
+    };
+    XSendEvent(dpy, w, False, StructureNotifyMask, (XEvent *)&ce);
+}
+
+static void moveresize(Window w, int x, int y, int cw, int ch) {
+    XMoveResizeWindow(dpy, w, x, y, cw, ch);
+    send_configure(w, x, y, cw, ch);
+}
+
 static void tilenode(Node *n, int x, int y, int w, int h, int x_offset, int edges) {
     if (!n) return;
     n->x = x; n->y = y; n->w = w; n->h = h;
@@ -448,12 +462,12 @@ static void tilenode(Node *n, int x, int y, int w, int h, int x_offset, int edge
     if (n->leaf) {
         if (n->isfloat) {
             /* fx/fy are absolute root coordinates already */
-            XMoveResizeWindow(dpy, n->win, park_x(n->fx, n->fw, x_offset), n->fy, n->fw, n->fh);
+            moveresize(n->win, park_x(n->fx, n->fw, x_offset), n->fy, n->fw, n->fh);
             return;
         }
 
         if (n->isfull) {
-            XMoveResizeWindow(dpy, n->win, scrx + x_offset, scry, scrw, disph);
+            moveresize(n->win, scrx + x_offset, scry, scrw, disph);
             return;
         }
 
@@ -468,7 +482,7 @@ static void tilenode(Node *n, int x, int y, int w, int h, int x_offset, int edge
         int gh = h - gt - gb;
         if (gw < 1) gw = 1;
         if (gh < 1) gh = 1;
-        XMoveResizeWindow(dpy, n->win, gx, gy, gw, gh);
+        moveresize(n->win, gx, gy, gw, gh);
         return;
     }
 
@@ -1653,6 +1667,10 @@ int main(void) {
             } else if (n) {
                 if (n->isfull || !n->isfloat) {
                     ev.xconfigurerequest.value_mask &= ~(CWX | CWY | CWWidth | CWHeight);
+                    /* refused: tell the client what it actually has */
+                    XWindowAttributes wa;
+                    if (XGetWindowAttributes(dpy, w, &wa))
+                        send_configure(w, wa.x, wa.y, wa.width, wa.height);
                 } else {
                     /* curspace is shown on every monitor at once, so being
                        on curspace anywhere makes the window visible */
