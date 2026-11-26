@@ -73,6 +73,7 @@ static int scrw, scrh, curspace, running = 1;
 static int prevspace = 0;
 static int disph;
 static Window barwin[MAXMONITOR] = {0}, edgewin[MAXMONITOR] = {0};
+static int bar_hidden[MAXMONITOR] = {0}, bar_peek[MAXMONITOR] = {0};
 
 /* ── Monitors ───────────────────────────────────────────────────────────── */
 
@@ -421,6 +422,13 @@ static int is_floating(Node *n) {
     return is_floating(n->a) && is_floating(n->b);
 }
 
+/* The bar's y on monitor m: in its reserved strip, or slid just past the
+   monitor edge while a fullscreen window has the screen. */
+static int bar_y(int m, int hidden) {
+    if (BAR_POS == 0) return monitors[m].y - (hidden ? BARH : 0);
+    return monitors[m].y + monitors[m].h - (hidden ? 0 : BARH);
+}
+
 static void find_bar(void) {
     Window root_ret, parent_ret, *children;
     unsigned int nchildren;
@@ -432,8 +440,8 @@ static void find_bar(void) {
                 continue;
             for (int m = 0; m < nmon; m++) {
                 if (!monitor_has_bar(m) || barwin[m]) continue;
-                int expect_y = (BAR_POS == 0) ? monitors[m].y : monitors[m].y + monitors[m].h - BARH;
-                if (wa.x == monitors[m].x && wa.y == expect_y) {
+                if (wa.x == monitors[m].x &&
+                    (wa.y == bar_y(m, 0) || wa.y == bar_y(m, 1))) {
                     barwin[m] = children[i];
                     break;
                 }
@@ -455,6 +463,37 @@ static void send_configure(Window w, int x, int y, int cw, int ch) {
 static void moveresize(Window w, int x, int y, int cw, int ch) {
     XMoveResizeWindow(dpy, w, x, y, cw, ch);
     send_configure(w, x, y, cw, ch);
+}
+
+static int has_full(Node *n) {
+    if (!n) return 0;
+    if (n->leaf) return n->isfull;
+    return has_full(n->a) || has_full(n->b);
+}
+
+/* Single place that decides where monitor m's bar is. It hides while the
+   visible workspace has a fullscreen window, unless the pointer touched the
+   edge strip (bar_peek). The window really moves, so a compositor can animate
+   the slide; without one it just jumps. */
+static void update_bar(int m) {
+    if (!monitor_has_bar(m)) return;
+
+    int full = layout_modes[m][curspace] != 2 && has_full(trees[m][curspace]);
+    if (!full) bar_peek[m] = 0;
+    int hide = full && !bar_peek[m];
+
+    if (!barwin[m]) find_bar();
+    if (barwin[m]) {
+        XMoveWindow(dpy, barwin[m], monitors[m].x, bar_y(m, hide));
+        /* a peeking bar has to sit above the fullscreen window */
+        if (!hide && (full || bar_hidden[m])) XRaiseWindow(dpy, barwin[m]);
+    }
+    bar_hidden[m] = hide;
+
+    if (edgewin[m]) {
+        if (full) XMapRaised(dpy, edgewin[m]);
+        else      XUnmapWindow(dpy, edgewin[m]);
+    }
 }
 
 static void tilenode(Node *n, int x, int y, int w, int h, int x_offset, int edges) {
@@ -751,11 +790,8 @@ static void tile(void) {
     }
     update_ewmh_client_list();
 
-    if (f && f->isfull && barwin[curmon]) {
-        XRaiseWindow(dpy, edgewin[curmon]);
-    }
-
     for (int m = 0; m < nmon; m++) {
+        update_bar(m);
         if (layout_modes[m][curspace] == 2) {
             if (!barwin[m]) find_bar();
             if (barwin[m]) XRaiseWindow(dpy, barwin[m]);
@@ -945,17 +981,7 @@ static void setfullscreen(int m, int s, Node *n, int full) {
     else
         XChangeProperty(dpy, n->win, net_wm_state, XA_ATOM, 32, PropModeReplace, (unsigned char*)0, 0);
 
-    if (m != curmon || s != curspace) return;
-    if (!barwin[m]) find_bar();
-    if (barwin[m]) {
-        if (full) {
-            XMapRaised(dpy, edgewin[m]);
-            XLowerWindow(dpy, barwin[m]);
-        } else {
-            XUnmapWindow(dpy, edgewin[m]);
-            XRaiseWindow(dpy, barwin[m]);
-        }
-    }
+    if (s != curspace) return;
     tile();
 }
 
@@ -1325,6 +1351,8 @@ static void reconfigure_monitors(void) {
         edgewin[m] = 0;
     }
     memset(barwin, 0, sizeof barwin);
+    memset(bar_hidden, 0, sizeof bar_hidden);
+    memset(bar_peek, 0, sizeof bar_peek);
     create_edgewins();
 
     /* Anything mid-gesture refers to geometry that no longer exists. */
@@ -1337,9 +1365,6 @@ static void reconfigure_monitors(void) {
     update_canvas_grabs();
     tile();
     focus_switch_target();
-
-    Node *f = focus[curmon][curspace];
-    if (f && f->isfull && edgewin[curmon]) XMapRaised(dpy, edgewin[curmon]);
 }
 
 /* Block for the next event, but no longer than timeout_ms. Returns 1 if an
@@ -1732,8 +1757,8 @@ int main(void) {
                     if (ev.xcrossing.window == edgewin[mi]) { edge_m = mi; break; }
                 }
                 if (edge_m >= 0) {
-                    if (!barwin[edge_m]) find_bar();
-                    if (barwin[edge_m]) XRaiseWindow(dpy, barwin[edge_m]);
+                    bar_peek[edge_m] = 1;
+                    update_bar(edge_m);
                     break;
                 }
             }
@@ -1751,7 +1776,7 @@ int main(void) {
                     /* Bypass hover-focus when Stage Manager is active on
                        that monitor's workspace */
                     if (layout_modes[m][curspace] == 1) break;
-                    if (n->isfull && barwin[m]) XLowerWindow(dpy, barwin[m]);
+                    if (bar_peek[m]) { bar_peek[m] = 0; update_bar(m); }
                     if (!n->isfloat && n != focus[m][curspace]) {
                         setfocus(m, n);
                     } else {
@@ -2177,8 +2202,6 @@ int main(void) {
                     } else {
                         canvas_prev_modes[curmon][curspace] = layout_modes[curmon][curspace];
                         canvas_seed_workspace(curmon, curspace);
-                        if (edgewin[curmon]) XUnmapWindow(dpy, edgewin[curmon]);
-                        if (barwin[curmon]) XRaiseWindow(dpy, barwin[curmon]);
                         layout_modes[curmon][curspace] = 2;
                         update_canvas_grabs();
                         tile();
